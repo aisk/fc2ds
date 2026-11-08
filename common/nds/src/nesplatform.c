@@ -4,6 +4,7 @@
 #include <nds.h>
 
 #include "ndsvideo.h"
+#include "subtitle.h"
 #include "vapu.h"
 #include "vnes.h"
 #include "vraster.h"
@@ -47,6 +48,8 @@ void nesPlatformRun(const NesPlatform *p)
     vnes = &nes;
     ndsVideoInit(p->chr, p->chr_size);
     sound_init();
+    if (p->init)
+        p->init();
     p->main();
 }
 
@@ -106,6 +109,7 @@ static void present(void)
     show_load();
     mmStreamUpdate();
     vnes->pad = read_pad();
+    subtitleFrame();
 }
 
 // Let NES time pass until the next NMI has been handled, taking the MMC3

@@ -97,5 +97,8 @@ int vnesRunUntil(int stop_line);
 // - portWaitNmi: where the original waits for something only the NMI changes
 //   (vblank): handle the rest of the frame (IRQ splits) and the NMI.
 // - portTickEnd: where the original main loop reaches the end of a tick.
+// - portMessage: the game starts printing message `id` of its text table
+//   (id < 0: the text is gone), so the platform can show a translation.
 void portWaitNmi(void);
 void portTickEnd(void);
+void portMessage(int id);

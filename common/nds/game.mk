@@ -80,6 +80,8 @@ LDFLAGS		:= $(ARCH) -L$(BLOCKSDS)/libs/libnds/lib -L$(BLOCKSDS)/libs/maxmod/lib 
 # YAML dumped from the ROM that gives positions and fallback text. Each
 # language becomes $(GENDIR)/text_<lang>.bin; Japanese gets font_ja.bin, the
 # other languages share font_zh.bin. Fonts come from common/fonts/fetch.sh.
+# TEXT_EXTRA lists more characters font_zh.bin needs (UI strings such as the
+# subtitle language names).
 
 ifneq ($(strip $(TEXT_LANGS)),)
 
@@ -103,9 +105,15 @@ $(GENDIR)/font_ja.bin: $(FONT_BDF_ja) $(GENDIR)/text_ja.bin $(TOOLS)/mkfont.py
 	@echo "  MKFONT  $@"
 	$(V)$(PYTHON) $(TOOLS)/mkfont.py $< $@ $(GENDIR)/text_ja.bin.chars >/dev/null
 
-$(GENDIR)/font_zh.bin: $(FONT_BDF_zh) $(foreach l,$(TEXT_OTHER),$(GENDIR)/text_$(l).bin) $(TOOLS)/mkfont.py
+$(GENDIR)/text_extra.chars: Makefile
+	$(V)mkdir -p $(@D)
+	$(V)printf '%s' '$(TEXT_EXTRA)' > $@
+
+$(GENDIR)/font_zh.bin: $(FONT_BDF_zh) $(foreach l,$(TEXT_OTHER),$(GENDIR)/text_$(l).bin) $(GENDIR)/text_extra.chars \
+		$(TOOLS)/mkfont.py
 	@echo "  MKFONT  $@"
-	$(V)$(PYTHON) $(TOOLS)/mkfont.py $< $@ $(foreach l,$(TEXT_OTHER),$(GENDIR)/text_$(l).bin.chars) >/dev/null
+	$(V)$(PYTHON) $(TOOLS)/mkfont.py $< $@ $(foreach l,$(TEXT_OTHER),$(GENDIR)/text_$(l).bin.chars) \
+		$(GENDIR)/text_extra.chars >/dev/null
 
 $(FONTDIR)/%.bdf:
 	@echo "  $@ is missing, run common/fonts/fetch.sh"

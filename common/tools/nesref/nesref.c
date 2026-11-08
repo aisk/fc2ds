@@ -631,6 +631,12 @@ static void start_port_tick(void)
             vnes->ram[pokes[i].addr] = pokes[i].value;
 }
 
+// Subtitles are an NDS feature; nothing to do here.
+void portMessage(int id)
+{
+    (void)id;
+}
+
 // --native: the port's main loop calls this where the original reaches the
 // tick PC. Runs the reference machine through the same tick, compares, and
 // exits when the run is over or the state differs.

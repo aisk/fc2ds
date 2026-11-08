@@ -13,6 +13,7 @@ typedef struct {
     void (*nmi)(void); // the game's NMI handler
     void (*irq)(void); // the game's IRQ handler (acknowledges the MMC3 IRQ)
     void (*main)(void); // the game's reset + main loop (never returns)
+    void (*init)(void); // optional: more setup once video is up (e.g. subtitles)
 } NesPlatform;
 
 // Set up video and the virtual NES, then run the game.

@@ -82,7 +82,7 @@ void ndsVideoInit(const uint8_t *chr, int chr_size)
     // Windows 0 (x 8-255) and 1 (x 0-7, the NES left column) = the lines
     // that show the frame; nothing outside them.
     WIN_OUT = 0;
-    SUB_WIN_OUT = 0;
+    SUB_WIN_OUT = 0x02; // sub BG1: subtitles (subtitle.h), everywhere
     WIN_IN = 0x1F1F;
     SUB_WIN_IN = 0x1F1F;
     irqSet(IRQ_VBLANK, vblank);
@@ -175,7 +175,7 @@ static void commit(Engine *e)
         SUB_WIN1_X1 = 8;
         SUB_WIN0_Y0 = SUB_WIN1_Y0 = s->first;
         SUB_WIN0_Y1 = SUB_WIN1_Y1 = s->end;
-        SUB_WIN_IN = in0 | in1 << 8;
+        SUB_WIN_IN = (in0 | in1 << 8) | 0x0202;
     } else {
         WIN0_X0 = 8;
         WIN0_X1 = 0;
