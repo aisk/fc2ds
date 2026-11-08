@@ -9,6 +9,8 @@ BLOCKSDS		?= /opt/blocksds/core
 WONDERFUL_TOOLCHAIN	?= /opt/wonderful
 ARM_NONE_EABI_PATH	?= $(WONDERFUL_TOOLCHAIN)/toolchain/gcc-arm-none-eabi/bin/
 
+.DEFAULT_GOAL	:= all
+
 FC2DS_ROOT	:= $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/../..)
 COMMON_NDS	:= $(FC2DS_ROOT)/common/nds
 TOOLS		:= $(FC2DS_ROOT)/common/tools
@@ -62,6 +64,45 @@ CFLAGS		:= -Wall -Wextra -std=gnu17 -O2 -ffunction-sections -fdata-sections \
 ASFLAGS		:= -x assembler-with-cpp $(ARCH) $(INCLUDES) $(DEFINES) -specs=$(SPECS)
 LDFLAGS		:= $(ARCH) -L$(BLOCKSDS)/libs/libnds/lib -Wl,-Map,$(MAP) -Wl,--gc-sections \
 		   -Wl,--start-group -lnds9 -lc -Wl,--end-group -specs=$(SPECS)
+
+# Text and fonts
+# --------------
+# A game with translations sets TEXT_LANGS (e.g. ja en zh) and TEXT_BASE, the
+# YAML dumped from the ROM that gives positions and fallback text. Each
+# language becomes $(GENDIR)/text_<lang>.bin; Japanese gets font_ja.bin, the
+# other languages share font_zh.bin. Fonts come from common/fonts/fetch.sh.
+
+ifneq ($(strip $(TEXT_LANGS)),)
+
+FONTDIR		:= $(FC2DS_ROOT)/common/fonts/fusion-pixel
+FONT_BDF_ja	:= $(FONTDIR)/fusion-pixel-12px-proportional-ja.bdf
+FONT_BDF_zh	:= $(FONTDIR)/fusion-pixel-12px-proportional-zh_hans.bdf
+TEXT_OTHER	:= $(filter-out ja,$(TEXT_LANGS))
+TEXT_ASSETS	:= $(foreach l,$(TEXT_LANGS),$(GENDIR)/text_$(l).bin) \
+		   $(GENDIR)/font_ja.bin $(if $(TEXT_OTHER),$(GENDIR)/font_zh.bin)
+GEN_ASSETS	+= $(TEXT_ASSETS)
+
+$(GENDIR)/text_ja.bin: $(TEXT_BASE) $(TOOLS)/mktext.py
+	@echo "  MKTEXT  $@"
+	$(V)$(PYTHON) $(TOOLS)/mktext.py $< $@
+
+$(GENDIR)/text_%.bin: text/%.yaml $(TEXT_BASE) $(TOOLS)/mktext.py
+	@echo "  MKTEXT  $@"
+	$(V)$(PYTHON) $(TOOLS)/mktext.py $< $@ --base $(TEXT_BASE)
+
+$(GENDIR)/font_ja.bin: $(FONT_BDF_ja) $(GENDIR)/text_ja.bin $(TOOLS)/mkfont.py
+	@echo "  MKFONT  $@"
+	$(V)$(PYTHON) $(TOOLS)/mkfont.py $< $@ $(GENDIR)/text_ja.bin.chars >/dev/null
+
+$(GENDIR)/font_zh.bin: $(FONT_BDF_zh) $(foreach l,$(TEXT_OTHER),$(GENDIR)/text_$(l).bin) $(TOOLS)/mkfont.py
+	@echo "  MKFONT  $@"
+	$(V)$(PYTHON) $(TOOLS)/mkfont.py $< $@ $(foreach l,$(TEXT_OTHER),$(GENDIR)/text_$(l).bin.chars) >/dev/null
+
+$(FONTDIR)/%.bdf:
+	@echo "  $@ is missing, run common/fonts/fetch.sh"
+	@exit 1
+
+endif
 
 # Targets
 # -------

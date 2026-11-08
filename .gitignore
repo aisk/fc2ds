@@ -9,3 +9,6 @@ build/
 *.nds
 *.elf
 __pycache__/
+
+# Downloaded fonts (common/fonts/fetch.sh)
+common/fonts/fusion-pixel/
