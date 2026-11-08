@@ -29,6 +29,7 @@ typedef struct {
 
 typedef struct {
     int32_t timer;  // CPU cycles until the next step
+    int32_t idle;   // cycles not yet run while the channel was silent
     int32_t period; // CPU cycles per step
     uint8_t step;
     uint8_t level;  // current output (0-15)
@@ -98,6 +99,60 @@ static int pulse_muted(const Channel *c, int idx)
     return c->raw < 8 || sweep_target(c, idx == 0) > 0x7FF;
 }
 
+// Run a timer that went to zero or below: the number of steps it took.
+// Silenced channels may sit at ultrasonic periods (one step every few CPU
+// cycles), so long runs are divided out instead of looped.
+static inline int advance(int32_t *timer, int32_t period)
+{
+    int32_t t = *timer + period;
+    int n = 1;
+    if (t <= 0) {
+        int k = -t / period + 1;
+        n += k;
+        t += k * period;
+    }
+    *timer = t;
+    return n;
+}
+
+// Step the noise LFSR n times. Within a run of k steps every feedback bit
+// still comes from bits of the starting value (tap 1: k <= 14, tap 6:
+// k <= 9), so k steps are one shift and one xor.
+static inline uint32_t lfsr_steps(uint32_t s, int n, int mode)
+{
+    int tap = mode ? 6 : 1, max = mode ? 9 : 14;
+    while (n > 0) {
+        int k = n < max ? n : max;
+        uint32_t fb = (s ^ s >> tap) & ((1u << k) - 1);
+        s = s >> k | fb << (15 - k);
+        n -= k;
+    }
+    return s;
+}
+
+// A silent channel's timer is only counted in the sample loop: run it now,
+// before anything can make the channel audible. Its output was 0 all
+// along, so this gives the same steps and noise sequence as running it
+// sample by sample.
+static void catch_up(void)
+{
+    for (int i = 0; i < 4; i++) {
+        Channel *c = &apu.ch[i];
+        if (!c->idle)
+            continue;
+        c->timer -= c->idle;
+        c->idle = 0;
+        if (c->timer > 0)
+            continue;
+        int n = advance(&c->timer, c->period);
+        if (i < 2)
+            c->step = (c->step + n) & 7;
+        else if (i == 3)
+            c->lfsr = (uint16_t)lfsr_steps(c->lfsr, n, c->mode);
+        // the triangle only steps while audible
+    }
+}
+
 // Recompute what depends on registers and counters rather than on the
 // waveform step: run after every write and frame counter event, so the
 // sample loop only has to step the waveforms.
@@ -157,6 +212,7 @@ static void half_frame(void)
 // fourth, then the sequence restarts.
 static void frame_event(void)
 {
+    catch_up();
     const int32_t *ev = frame_events[apu.five_step];
     while (apu.frame_cycle >= apu.next_event) {
         int i = apu.frame_step;
@@ -179,6 +235,7 @@ void vapuWrite(uint16_t addr, uint8_t v)
     int r = addr - 0x4000;
     if (r < 0 || r > 0x17)
         return;
+    catch_up();
     if (r < 8) {
         Channel *c = &apu.ch[r >> 2];
         switch (r & 3) {
@@ -277,22 +334,6 @@ void vapuInit(int sample_rate)
     update();
 }
 
-// Run a timer that went to zero or below: the number of steps it took.
-// Silenced channels may sit at ultrasonic periods (one step every few CPU
-// cycles), so long runs are divided out instead of looped.
-static inline int advance(int32_t *timer, int32_t period)
-{
-    int32_t t = *timer + period;
-    int n = 1;
-    if (t <= 0) {
-        int k = -t / period + 1;
-        n += k;
-        t += k * period;
-    }
-    *timer = t;
-    return n;
-}
-
 static const uint8_t triangle_wave[32] = {
     15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0,
     0,  1,  2,  3,  4,  5,  6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
@@ -310,26 +351,26 @@ VAPU_HOT void vapuRender(int16_t *out, int samples)
         if (apu.frame_cycle >= apu.next_event)
             frame_event();
 
-        if ((p1->timer -= cycles) <= 0) {
+        if (!p1->vol)
+            p1->idle += cycles;
+        else if ((p1->timer -= cycles) <= 0) {
             p1->step = (p1->step + advance(&p1->timer, p1->period)) & 7;
             p1->level = (p1->duty >> p1->step & 1) ? p1->vol : 0;
         }
-        if ((p2->timer -= cycles) <= 0) {
+        if (!p2->vol)
+            p2->idle += cycles;
+        else if ((p2->timer -= cycles) <= 0) {
             p2->step = (p2->step + advance(&p2->timer, p2->period)) & 7;
             p2->level = (p2->duty >> p2->step & 1) ? p2->vol : 0;
         }
-        if ((t->timer -= cycles) <= 0) {
-            int steps = advance(&t->timer, t->period);
-            if (t->vol)
-                t->step = (t->step + steps) & 31;
-        }
-        if ((n->timer -= cycles) <= 0) {
-            uint32_t lfsr = n->lfsr;
-            int tap = n->mode ? 6 : 1;
-            do {
-                n->timer += n->period;
-                lfsr = lfsr >> 1 | ((lfsr ^ lfsr >> tap) & 1) << 14;
-            } while (n->timer <= 0);
+        if (!t->vol)
+            t->idle += cycles;
+        else if ((t->timer -= cycles) <= 0)
+            t->step = (t->step + advance(&t->timer, t->period)) & 31;
+        if (!n->vol)
+            n->idle += cycles;
+        else if ((n->timer -= cycles) <= 0) {
+            uint32_t lfsr = lfsr_steps(n->lfsr, advance(&n->timer, n->period), n->mode);
             n->lfsr = (uint16_t)lfsr;
             n->level = (lfsr & 1) ? 0 : n->vol;
         }

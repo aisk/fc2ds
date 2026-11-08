@@ -1,5 +1,12 @@
 #include "vraster.h"
 
+#if defined(ARM9)
+#include <nds/ndstypes.h>
+#define VRASTER_HOT ITCM_CODE ARM_CODE
+#else
+#define VRASTER_HOT
+#endif
+
 static void apply(VnesRaster *r, const VnesRasterEvent *e)
 {
     uint8_t v = e->value;
@@ -72,7 +79,7 @@ static void next_line(VnesRaster *r)
     r->v = (v & ~0x041F) | (r->t & 0x041F);
 }
 
-void vrasterBuild(VrasterFrame *f)
+VRASTER_HOT void vrasterBuild(VrasterFrame *f)
 {
     VnesRaster r = vnes->raster_start;
     // Pre-render line: v gets all of t when rendering is on.

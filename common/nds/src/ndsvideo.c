@@ -151,7 +151,8 @@ static void commit(Engine *e)
     NdsScreen *s = &e->screen;
     upload_tiles(&e->bg_cache, (uint32_t *)bgGetGfxPtr(e->bg));
     upload_tiles(&e->obj_cache, e->sub ? (uint32_t *)SPRITE_GFX_SUB : (uint32_t *)SPRITE_GFX);
-    copy_words((uint32_t *)bgGetMapPtr(e->bg), (const uint32_t *)s->map, sizeof s->map / 4);
+    DC_FlushRange(s->map, sizeof s->map);
+    dmaCopyWords(3, s->map, bgGetMapPtr(e->bg), sizeof s->map);
     set_palette(bgpal, objpal, s);
 
     for (int i = 0; i < 128; i++) {

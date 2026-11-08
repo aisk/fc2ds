@@ -87,6 +87,11 @@ void vnesRasterSave(VnesRaster *r);
 // snapshot on the pre-render line).
 void vnesAddCycles(int cycles);
 
+// Run whole lines until an interrupt is pending (returns 0, nothing run
+// once one is) or a line ends with the current line at stop_line (returns
+// 1). The same as stepping line by line with vnesAddCycles, in one call.
+int vnesRunUntil(int stop_line);
+
 // Provided by the platform that runs the ported game (the host runner or the
 // NDS main loop), called by ported code:
 // - portWaitNmi: where the original waits for something only the NMI changes

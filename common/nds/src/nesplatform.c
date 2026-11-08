@@ -124,9 +124,7 @@ void portWaitNmi(void)
             platform.irq();
             continue;
         }
-        int before = vnes->line;
-        vnesAddCycles((int)((vnes->dots_per_line - vnes->dots + 2) / 3));
-        if (before == 239 && vnes->line == 240)
+        if (vnesRunUntil(240))
             present();
     }
 }

@@ -2,6 +2,14 @@
 
 #include <string.h>
 
+// Hot loops run every frame: on the NDS keep them in ITCM as ARM code.
+#if defined(ARM9)
+#include <nds/ndstypes.h>
+#define VNES_HOT ITCM_CODE ARM_CODE
+#else
+#define VNES_HOT
+#endif
+
 Vnes *vnes;
 
 // Log a raster register access during the visible lines.
@@ -241,7 +249,7 @@ static void mmc3_clock(void)
         vnes->irq_pending = 1;
 }
 
-void vnesAddCycles(int cycles)
+static inline void add_cycles(int cycles)
 {
     vnes->dots += (long)(cycles + vnes->dma_cycles) * 3;
     vnes->dma_cycles = 0;
@@ -263,5 +271,21 @@ void vnesAddCycles(int cycles)
             vnes->status &= 0x1F;
             vnes->frame++;
         }
+    }
+}
+
+void vnesAddCycles(int cycles)
+{
+    add_cycles(cycles);
+}
+
+VNES_HOT int vnesRunUntil(int stop_line)
+{
+    for (;;) {
+        if (vnes->nmi || vnes->irq_pending)
+            return 0;
+        add_cycles((int)((vnes->dots_per_line - vnes->dots + 2) / 3));
+        if (vnes->line == stop_line)
+            return 1;
     }
 }

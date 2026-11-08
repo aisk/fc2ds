@@ -353,6 +353,8 @@ void portWaitNmi(void)
         }
         if (vnes->irq_pending && (native || !(c->p & FLAG_I)))
             take_interrupt(0);
+        else if (native)
+            vnesRunUntil(-1); // as on the NDS
         else
             vnesAddCycles((int)((vnes->dots_per_line - vnes->dots + 2) / 3));
     }
