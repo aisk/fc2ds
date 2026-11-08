@@ -203,7 +203,7 @@ $(HOSTDIR)/ram.h: $(RAM_NAMES) $(TOOLS)/mkramh.py $(TOOLS)/trace6502.py
 	@echo "  RAMH    $@"
 	$(V)$(PYTHON) $(TOOLS)/mkramh.py $@ $(RAM_NAMES)
 
-$(VERIFY_BIN): $(PORT_SOURCES) $(wildcard port/*.h) $(HOSTDIR)/ram.h $(wildcard $(NESREF)/*.[ch]) $(wildcard $(VNES)/*.[ch])
+$(VERIFY_BIN): $(PORT_SOURCES) $(wildcard port) $(wildcard port/*.h) $(HOSTDIR)/ram.h $(wildcard $(NESREF)/*.[ch]) $(wildcard $(VNES)/*.[ch])
 	@echo "  HOSTCC  $@"
 	$(V)$(HOST_CC) -O2 -g -Wall -Wextra -DNESREF -Iport -I$(HOSTDIR) -I$(NESREF) -I$(VNES) -I$(COMMON_NDS)/include -o $@ \
 		$(NESREF)/nesref.c $(NESREF)/cpu6502.c $(VNES)/vnes.c $(VNES)/vraster.c $(VNES)/vrender.c $(VNES)/vapu.c \
@@ -214,13 +214,19 @@ $(VERIFY_BIN): $(PORT_SOURCES) $(wildcard port/*.h) $(HOSTDIR)/ram.h $(wildcard 
 # ported routines hooked in, for games that are only partly ported.
 VERIFY_MODE ?= --native
 
+# Scripts run in parallel (VERIFY_JOBS, default: all cores); each one's
+# output is printed when it is done, and the first failure stops the run.
+VERIFY_JOBS ?= $(shell nproc 2>/dev/null || echo 4)
+
 verify: $(VERIFY_BIN) $(ROM_FILE) $(VERIFY_DEPS)
-	$(V)rm -f $(HOSTDIR)/coverage.txt
-	$(V)for f in verify/*.txt $(VERIFY_GEN_SCRIPTS); do \
-		echo "  VERIFY  $$f"; \
-		$(VERIFY_BIN) $(ROM_FILE) --tick-pc $(TICK_PC) $(VERIFY_MODE) --speed 32 --input $$f \
-			--coverage $(HOSTDIR)/coverage.txt $(VERIFY_FLAGS) || exit 1; \
-	done
+	$(V)rm -rf $(HOSTDIR)/coverage.txt $(HOSTDIR)/cov
+	$(V)mkdir -p $(HOSTDIR)/cov
+	$(V)ls verify/*.txt $(VERIFY_GEN_SCRIPTS) 2>/dev/null | xargs -P $(VERIFY_JOBS) -I{} sh -c '\
+		n=$$(echo {} | tr / _); \
+		out=$$($(VERIFY_BIN) $(ROM_FILE) --tick-pc $(TICK_PC) $(VERIFY_MODE) --speed 32 --input {} \
+			--coverage $(HOSTDIR)/cov/$$n $(VERIFY_FLAGS) 2>&1); s=$$?; \
+		printf "  VERIFY  %s\n%s\n" {} "$$out"; exit $$((s ? 255 : 0))' || exit 1
+	$(V)cat $(HOSTDIR)/cov/* > $(HOSTDIR)/coverage.txt
 	$(V)awk '{ n[$$1] += $$2 } END { for (k in n) { t++; if (!n[k]) { u++; printf "  not reached: %s\n", k } } \
 		printf "  %d ported routines, %d reached by the scripts\n", t, t - u }' $(HOSTDIR)/coverage.txt
 
