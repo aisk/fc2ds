@@ -43,7 +43,9 @@
 //                    vblank. Implies --compare.
 //   --shot TICK:PREFIX  after that tick write PREFIX-ref.ppm (and
 //                    PREFIX-port.ppm with --compare / --native): the last
-//                    frame drawn by common/vnes/vrender (repeatable)
+//                    frame drawn by common/vnes/vrender (repeatable);
+//                    with the game's GameScreenLayout, also PREFIX-*-nds.ppm:
+//                    both NDS screens as common/nds ndsframe builds them
 //   --pcs FILE       append "PC bank count" for every 6502 instruction the
 //                    port machine still runs (what is left to port)
 //   --trace          print every instruction (slow)
@@ -58,6 +60,8 @@
 
 #include "vnes.h"
 #include "vrender.h"
+#include "ndsframe.h"
+#include "nes_chr.h"
 
 // Hooks registered with PORT_HOOK; the section is empty (and the symbols
 // null) when nesref is built on its own.
@@ -411,6 +415,50 @@ static void write_ppm(const char *path)
     fclose(f);
 }
 
+void GameScreenLayout(const VrasterFrame *f, NdsLayout *out) __attribute__((weak));
+
+// The current machine's frame as the NDS shows it (top over bottom).
+static void write_nds_ppm(const char *path)
+{
+    static VrasterFrame frame;
+    static NdsScreen top, bot;
+    static NdsTileCache bg, obj, bg2, obj2;
+    static uint32_t *chr4;
+    static uint8_t pix[2][192][256];
+    if (!chr4) {
+        chr4 = malloc((size_t)vnes->chr_size * 2);
+        nesChrTo4bpp(vnes->chr, chr4, vnes->chr_size / 16);
+    }
+    ndsTileCacheInit(&bg);
+    ndsTileCacheInit(&obj);
+    ndsTileCacheInit(&bg2);
+    ndsTileCacheInit(&obj2);
+    vrasterBuild(&frame);
+    NdsLayout lay;
+    GameScreenLayout(&frame, &lay);
+    ndsScreenBuild(&top, &bg, &obj, &frame, lay.top_first, lay.top_end, 0, 1);
+    ndsScreenCompose(&top, &bg, &obj, chr4, pix[0]);
+    if (lay.bot_end > lay.bot_first) {
+        ndsScreenBuild(&bot, &bg2, &obj2, &frame, lay.bot_first, lay.bot_end, lay.bot_dst, 0);
+        ndsScreenCompose(&bot, &bg2, &obj2, chr4, pix[1]);
+    } else {
+        memset(pix[1], 0x0F, sizeof pix[1]);
+    }
+    FILE *f = fopen(path, "wb");
+    if (!f) {
+        perror(path);
+        return;
+    }
+    fprintf(f, "P6\n256 384\n255\n");
+    for (int y = 0; y < 384; y++)
+        for (int x = 0; x < 256; x++) {
+            uint32_t c = vrenderRgb(pix[y / 192][y % 192][x]);
+            uint8_t rgb[3] = { c >> 16, c >> 8, c };
+            fwrite(rgb, 1, 3, f);
+        }
+    fclose(f);
+}
+
 // Screenshots requested for this tick.
 static void take_shots(long tick)
 {
@@ -423,6 +471,10 @@ static void take_shots(long tick)
             snprintf(path, sizeof path, "%s-%s.ppm", shots[i].prefix, machines[m].name);
             use_machine(&machines[m]);
             write_ppm(path);
+            if (GameScreenLayout) {
+                snprintf(path, sizeof path, "%s-%s-nds.ppm", shots[i].prefix, machines[m].name);
+                write_nds_ppm(path);
+            }
         }
     }
     use_machine(keep);

@@ -181,8 +181,9 @@ $(HOSTDIR)/ram.h: $(RAM_NAMES) $(TOOLS)/mkramh.py $(TOOLS)/trace6502.py
 
 $(VERIFY_BIN): $(PORT_SOURCES) $(wildcard port/*.h) $(HOSTDIR)/ram.h $(wildcard $(NESREF)/*.[ch]) $(wildcard $(VNES)/*.[ch])
 	@echo "  HOSTCC  $@"
-	$(V)$(HOST_CC) -O2 -g -Wall -Wextra -DNESREF -Iport -I$(HOSTDIR) -I$(NESREF) -I$(VNES) -o $@ \
-		$(NESREF)/nesref.c $(NESREF)/cpu6502.c $(VNES)/vnes.c $(VNES)/vraster.c $(VNES)/vrender.c $(PORT_SOURCES)
+	$(V)$(HOST_CC) -O2 -g -Wall -Wextra -DNESREF -Iport -I$(HOSTDIR) -I$(NESREF) -I$(VNES) -I$(COMMON_NDS)/include -o $@ \
+		$(NESREF)/nesref.c $(NESREF)/cpu6502.c $(VNES)/vnes.c $(VNES)/vraster.c $(VNES)/vrender.c \
+		$(COMMON_NDS)/src/ndsframe.c $(COMMON_NDS)/src/nes_chr.c $(PORT_SOURCES)
 
 # --native runs the port as it runs on the NDS (no 6502 at all); with
 # VERIFY_MODE=--compare the port machine runs the original code with the
