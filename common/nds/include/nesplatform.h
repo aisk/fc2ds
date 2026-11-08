@@ -14,6 +14,9 @@ typedef struct {
     void (*irq)(void); // the game's IRQ handler (acknowledges the MMC3 IRQ)
     void (*main)(void); // the game's reset + main loop (never returns)
     void (*init)(void); // optional: more setup once video is up (e.g. subtitles)
+    // Optional: once per shown frame, during vblank, after the screens are
+    // updated. Draws the game's own bottom screen (subscreen.h).
+    void (*frame)(void);
 } NesPlatform;
 
 // Set up video and the virtual NES, then run the game.

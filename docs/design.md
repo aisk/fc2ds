@@ -78,6 +78,7 @@ What a game provides:
 1. `port/`: the ported code, with `GameMain()` (reset + main loop calling `portWaitNmi()` and `portTickEnd()`), `Nmi()` and `Irq()`.
 2. `GameScreenLayout()`: which NES lines go to the top screen (cropped to 192, e.g. following the player) and which to the bottom screen (e.g. the status bar below a split). See `games/<name>/port/screen.c`.
 3. `src/`: `main()` filling a `NesPlatform` (PRG/CHR from the ROM extracted at build time, the NMI/IRQ handlers, `GameMain`) and calling `nesPlatformRun()`.
+4. Optionally its own bottom screen (`NesPlatform.frame`, once per frame in vblank): `common/nds/subscreen.[ch]` is a 256x192 canvas on sub BG1, above the NES picture, shared with the subtitles. The game redraws its status bar there from NES RAM, with the original icons from CHR and numbers in the 12 px font, and adds what the NES had no room for (the first port: owned items, stage, boss HP, a stage map with the player; `games/<name>/src/hud.c`). `GameScreenLayout()` then leaves the NES status bar out. It only reads RAM, so `make verify` is not affected.
 
 Note: RAM names from `ram.h` are macros; include the vnes/ndsframe headers before `port.h` where both are needed, since names like `mirroring` clash with struct fields.
 
@@ -115,7 +116,7 @@ Builds run inside WSL (Debian) with BlocksDS (devkitPro's servers are not reacha
 
 - The original Japanese text is dumped from the ROM at build time (`build/text/ja.yaml`, not committed). Translations live in `games/<name>/text/{en,zh}.yaml` with the same keys; a plain string line takes its position from the Japanese line, and missing messages fall back to Japanese.
 - `common/tools/mktext.py` turns each language into a binary message table, and `common/tools/mkfont.py` cuts a font down to the glyphs that table uses. The font is Fusion Pixel 12px proportional (OFL, fetched by `common/fonts/fetch.sh`): the ja variant for Japanese, zh_hans for Chinese and English. `common/nds/src/text.c` draws it into a tile canvas.
-- In game the translation is a subtitle on the bottom screen (`common/nds/subtitle.[ch]`): the game keeps drawing its own Japanese text, and the port calls `portMessage(id)` when it starts printing message `id` (and `portMessage(-1)` when the screen changes), so the game code barely changes. The language follows the firmware setting (none for Japanese) and touching the bottom screen cycles through the languages and off. The viewer still shows each language laid out in the original text boxes.
+- In game the translation is a subtitle on the bottom screen (`common/nds/subtitle.[ch]`): the game keeps drawing its own Japanese text, and the port calls `portMessage(id)` when it starts printing message `id` (and `portMessage(-1)` when the screen changes), so the game code barely changes. The language follows the firmware setting (none for Japanese) and touching the subtitle band cycles through the languages and off. The viewer still shows each language laid out in the original text boxes.
 
 ## 8. Bug fixes
 

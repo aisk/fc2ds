@@ -153,7 +153,7 @@ Goal: the game's dialogue in other languages, without changing how the game draw
 
 - The game keeps drawing its original text, and the translation appears as a subtitle on the bottom screen (`common/nds/subtitle.[ch]`).
 - The port calls `portMessage(id)` where the game starts printing message `id`, and `portMessage(-1)` where the screen changes (the first port: `P1TextStep` and `SetSubmode`).
-- `src/game.c` lists the languages and picks one from the firmware language. Touching the bottom screen cycles through the languages and off.
+- `src/game.c` lists the languages and picks one from the firmware language. Touching the subtitle band cycles through the languages and off.
 - UI strings that are not in the message tables (language names) need their characters in `TEXT_EXTRA`, since the fonts are cut down to the characters in use.
 - Text the game prints through other routines (credits, staff roll) needs its own hook.
 
@@ -163,6 +163,10 @@ Done when: every message shows its translation, and the translated names in `tex
 
 - **Bug fixes**: go through `fixes.md`. Each real bug becomes a `FIX_<NAME>` switch, on by default, so `make verify` can still be run with the original behaviour.
 - **Enhancements**: hardware limits are removed where they are (`docs/design.md` section 3).
+- **Own bottom screen**: instead of the NES status bar, draw a HUD into `common/nds/subscreen.h` from `NesPlatform.frame` (the first port: `src/hud.c`).
+  - Read NES RAM only, and redraw a part only when its value changed. Draw at most one part per frame, and long work (a stage map) over several frames, since everything here adds to the frame's load.
+  - Icons come straight from the CHR the status bar uses (`textBlitNes`), numbers and labels from the 12 px font (their characters go in `TEXT_EXTRA`).
+  - `GameScreenLayout()` gets a switch to leave the status bar out. Keep a way back to the NES status bar (the first port: touch the HUD), and show it whenever the game uses the status bar for its own UI (the first port: weapon select and pause).
   - Sprite limits and slowdown are already gone, by design.
   - Flicker that the game's own code makes on purpose (OAM rotation, objects drawn every other frame for transparency) needs a switch in the port plus, where the NES has no way to say it (alpha, more colours), extra fields that the C code writes for the renderer. The renderer TODO in `docs/design.md` lists what is open.
 

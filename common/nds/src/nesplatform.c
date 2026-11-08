@@ -109,6 +109,8 @@ static void present(void)
     show_load();
     mmStreamUpdate();
     vnes->pad = read_pad();
+    if (platform.frame)
+        platform.frame();
     subtitleFrame();
 }
 

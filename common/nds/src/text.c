@@ -98,9 +98,84 @@ static inline void plot(TextCanvas *c, int x, int y, int colour)
 
 void textFill(TextCanvas *c, int x, int y, int w, int h, int colour)
 {
-    for (int j = y; j < y + h; j++)
-        for (int i = x; i < x + w; i++)
-            plot(c, i, j, colour);
+    // Clip, then fill whole 4-pixel nibble groups per tile row word.
+    if (x < 0) {
+        w += x;
+        x = 0;
+    }
+    if (y < 0) {
+        h += y;
+        y = 0;
+    }
+    if (x + w > c->w * 8)
+        w = c->w * 8 - x;
+    if (y + h > c->h * 8)
+        h = c->h * 8 - y;
+    if (w <= 0 || h <= 0)
+        return;
+    uint32_t fill = (uint32_t)colour * 0x11111111u;
+    int tx0 = x >> 3, tx1 = (x + w - 1) >> 3;
+    for (int j = y; j < y + h; j++) {
+        uint32_t *row = &c->gfx[((j >> 3) * c->w) * 8 + (j & 7)];
+        for (int tx = tx0; tx <= tx1; tx++) {
+            int a = tx == tx0 ? x & 7 : 0;
+            int b = tx == tx1 ? ((x + w - 1) & 7) + 1 : 8;
+            uint32_t mask = (b == 8 ? 0xFFFFFFFFu : (1u << (b * 4)) - 1) & ~((1u << (a * 4)) - 1);
+            uint32_t *p = &row[tx * 8];
+            *p = (*p & ~mask) | (fill & mask);
+        }
+    }
+}
+
+void textPutRow(TextCanvas *c, int x, int y, const uint8_t *colours, int n)
+{
+    if ((unsigned)y >= (unsigned)(c->h * 8) || x < 0 || x + n > c->w * 8)
+        return;
+    uint32_t *row = &c->gfx[((y >> 3) * c->w) * 8 + (y & 7)];
+    while (n > 0) {
+        uint32_t *p = &row[(x >> 3) * 8];
+        int a = x & 7, b = a + n < 8 ? a + n : 8;
+        uint32_t word = 0, mask = 0;
+        for (int i = a; i < b; i++) {
+            word |= (uint32_t)*colours++ << (i * 4);
+            mask |= 0xFu << (i * 4);
+        }
+        *p = mask == 0xFFFFFFFFu ? word : (*p & ~mask) | word;
+        n -= b - a;
+        x += b - a;
+    }
+}
+
+// Merge 8 pixels (nibbles of `word`, where `mask` is set) into row y at x.
+static void put8(TextCanvas *c, int x, int y, uint32_t word, uint32_t mask)
+{
+    if ((unsigned)y >= (unsigned)(c->h * 8) || x < 0 || x + 8 > c->w * 8)
+        return;
+    uint32_t *row = &c->gfx[((y >> 3) * c->w + (x >> 3)) * 8 + (y & 7)];
+    int s = (x & 7) * 4;
+    if (!s) {
+        *row = (*row & ~mask) | word;
+        return;
+    }
+    row[0] = (row[0] & ~(mask << s)) | word << s;
+    row[8] = (row[8] & ~(mask >> (32 - s))) | word >> (32 - s);
+}
+
+void textBlitNes(TextCanvas *c, const uint8_t *tile, int x, int y, const uint8_t colours[4])
+{
+    for (int r = 0; r < 8; r++) {
+        uint8_t lo = tile[r], hi = tile[r + 8];
+        uint32_t word = 0, mask = 0;
+        for (int i = 0; i < 8; i++) {
+            int v = (lo >> (7 - i) & 1) | (hi >> (7 - i) & 1) << 1;
+            if (colours[v]) {
+                word |= (uint32_t)colours[v] << (i * 4);
+                mask |= 0xFu << (i * 4);
+            }
+        }
+        if (mask)
+            put8(c, x, y + r, word, mask);
+    }
 }
 
 int textWidth(const uint8_t *font, const char *s)

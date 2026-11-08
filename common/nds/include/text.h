@@ -21,6 +21,13 @@ void textCanvasInit(TextCanvas *c, uint16_t *map, uint32_t *gfx, int first_tile,
 // Fill a pixel rectangle with one colour index (0 = transparent).
 void textFill(TextCanvas *c, int x, int y, int w, int h, int colour);
 
+// Set n pixels of row y from x on to the given colours.
+void textPutRow(TextCanvas *c, int x, int y, const uint8_t *colours, int n);
+
+// Draw a NES 2bpp tile (16 bytes) at (x, y), NES colour v as canvas colour
+// colours[v]; 0 leaves the pixel as it is.
+void textBlitNes(TextCanvas *c, const uint8_t *tile, int x, int y, const uint8_t colours[4]);
+
 // Line height and baseline of a font in pixels.
 int textLineHeight(const uint8_t *font);
 int textAscent(const uint8_t *font);
