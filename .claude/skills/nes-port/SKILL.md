@@ -19,14 +19,14 @@ The process is `docs/porting-guide.md`. Read it first, then `docs/design.md` (th
 
 ## 2. Work the phase
 
-Follow the phase in `docs/porting-guide.md`. The files of a game start from `common/template` (`newgame.py` copies it). If another game exists under `games/` (each is its own repository, ignored by this one), use it as the worked example for every file type:
+Follow the phase in `docs/porting-guide.md`. The files of a game start from `common/template` (`newgame.py` copies it). If another game exists under `games/` (commercial ones are separate repositories, ignored by this one), use it as the worked example for every file type:
 - `disasm/layout.toml`
 - `ram.md`, `notes/*.md`, `fixes.md`
 - `verify/*.txt`
 - `port/*.c`, `port/port.h`, `port/screen.c`, `port/main.c`
 - `src/game.c`
 
-A new game directory gets its own git repository (`git init` in `games/<name>`). Commit the game there, and shared code (`common/`, `docs/`) in this repository.
+A commercial game gets its own git repository (`newgame.py` runs `git init` in `games/<name>`): commit the game there, and shared code (`common/`, `docs/`) in this repository. A freely licensed game can stay in this repository (`newgame.py --here`, plus a `!games/<name>/` line in `.gitignore`).
 
 Rules that hold in every phase:
 

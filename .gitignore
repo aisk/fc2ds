@@ -13,5 +13,6 @@ __pycache__/
 # Downloaded fonts (common/fonts/fetch.sh)
 common/fonts/fusion-pixel/
 
-# Games live in their own repositories (see README.md)
+# Games live in their own repositories unless freely licensed (see README.md);
+# add a `!games/<name>/` line for a game that belongs here
 games/*

@@ -37,6 +37,9 @@ def main() -> None:
     ap.add_argument("rom")
     ap.add_argument("name", help="directory name under games/ and symbol prefix (lowercase, a-z0-9_)")
     ap.add_argument("--title", help="game title for the NDS banner and README")
+    ap.add_argument("--here", action="store_true",
+                    help="keep the game in this repository (freely licensed games only) "
+                         "instead of starting a git repository of its own")
     args = ap.parse_args()
 
     if not re.fullmatch(r"[a-z][a-z0-9_]*", args.name):
@@ -78,9 +81,12 @@ def main() -> None:
         for k, v in values.items():
             text = text.replace(k, v)
         out.write_text(text)
-    # Each game is its own repository: the port is derived from the original
-    # game, so it stays out of this one (see README.md).
-    subprocess.run(["git", "init", "-q", str(dest)], check=False)
+    # A port is derived from its game, so by default it is a repository of
+    # its own, kept out of this one (see README.md).
+    if args.here:
+        print(f"add '!games/{args.name}/' to .gitignore to commit it here")
+    else:
+        subprocess.run(["git", "init", "-q", str(dest)], check=False)
     print(f"created {dest.relative_to(ROOT)} for {values['@MAPPER@']}, "
           f"PRG {values['@PRG@']} KiB, CHR {values['@CHR@']} KiB")
     print(f"next: cd {dest.relative_to(ROOT)} && bash -lc make")
