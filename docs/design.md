@@ -51,7 +51,7 @@ game logic (C, ported per game)  ->  virtual NES PPU state (nametables, OAM, pal
                                             \->  HUD/map/menus (bottom screen, native NDS)
 ```
 
-- Phase A: game logic writes into a virtual PPU (same model as the original code). The shared renderer converts it to NDS hardware every vblank. Porting stays mechanical and verifiable.
+- Phase A: game logic writes into a virtual NES (`common/vnes`: RAM, MMC3, PPU memory and registers, joypad), the same model as the original code, and keeps the original RAM layout (`ram.h`, generated from `ram.md` and the notes). The renderer converts the PPU state to NDS hardware every vblank. Porting stays mechanical and verifiable.
 - Phase B (optional, per game): replace parts with native NDS rendering (wider view, extra layers, bottom-screen UI).
 - CHR banks (MMC3 1K/2K switching) map to NDS VRAM tile slots. The full 128 KiB CHR fits in VRAM, so bank switching becomes a tile index offset.
 - Audio: port the game's sound driver data and play it through a 2A03 synth on ARM7 (square/triangle/noise/DPCM in PSG channels or a mixed stream).
@@ -64,7 +64,7 @@ game logic (C, ported per game)  ->  virtual NES PPU state (nametables, OAM, pal
 4. **Map RAM**: zero page and $0300-$07FF variables, documented in `games/<name>/ram.md`.
 5. **Decode data formats**: levels, metatiles, enemy tables, text and its encoding table. Write extractors in `common/tools` or `games/<name>/tools`.
 6. **Port logic**: routine by routine into C. Keep the original address in a comment (`/* $C3A0 */`) for traceability.
-7. **Verify**: record input movies in Mesen, replay them in both the original and the port, and compare the RAM state per game tick (a diff tool in `common/tools`). This is how we catch porting errors. Compare per tick (one pass of the main loop), not per video frame, because the original lags and the port does not: on the original side, log RAM at the end of each main loop pass and skip lag frames, and feed the port the input that the original actually read on each tick.
+7. **Verify**: `make verify` builds `common/tools/nesref` on the host, a headless 6502 + MMC3 runner on top of `common/vnes`. It runs two machines in lockstep with the input scripts in `games/<name>/verify/`: one runs the original code, the other has every ported routine hooked in (`port/hooks.c`), so a routine can be checked as soon as it is ported, while the rest still runs as 6502. After every tick, RAM, PPU memory and PPU/MMC3 registers must match. Compare per tick (one pass of the main loop), not per video frame: input is applied per tick, and the CPU runs faster than real hardware so the original does not lag. Mesen is still useful for exploring the original, but not needed for verification.
 8. **Improve**: HUD on the bottom screen, translations, bug fixes (`fixes.md`).
 
 ## 6. Toolchain

@@ -44,6 +44,8 @@ When piping a script from PowerShell, strip CR first, or bash fails on `\r`:
 bash -lc 'arm-none-eabi-gcc --version; cat $BLOCKSDS/version.txt'
 ```
 
+`make verify` also needs a host C compiler (`gcc`) and Python 3 with PyYAML.
+
 ## 4. Notes
 
 - The project lives inside WSL (Debian testing). Automatic mounting of Windows drives is off on purpose, so do not rely on `/mnt/c`. Windows tools reach the files through `\\wsl.localhost\Debian\home\<user>\fc2ds\...`.
