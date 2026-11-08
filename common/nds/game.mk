@@ -188,7 +188,7 @@ verify: $(VERIFY_BIN) $(ROM_FILE) $(VERIFY_DEPS)
 	$(V)rm -f $(HOSTDIR)/coverage.txt
 	$(V)for f in verify/*.txt $(VERIFY_GEN_SCRIPTS); do \
 		echo "  VERIFY  $$f"; \
-		$(VERIFY_BIN) $(ROM_FILE) --tick-pc $(TICK_PC) --compare --speed 8 --input $$f \
+		$(VERIFY_BIN) $(ROM_FILE) --tick-pc $(TICK_PC) --compare --speed 32 --input $$f \
 			--coverage $(HOSTDIR)/coverage.txt $(VERIFY_FLAGS) || exit 1; \
 	done
 	$(V)awk '{ n[$$1] += $$2 } END { for (k in n) { t++; if (!n[k]) { u++; printf "  not reached: %s\n", k } } \
