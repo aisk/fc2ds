@@ -25,6 +25,11 @@ typedef struct Vnes {
     uint8_t w, read_buffer;
     uint8_t nmi;      // NMI edge for the CPU (host runner only)
 
+    // APU: last value written to $4000-$4017, and a hash of every write in
+    // order (address and value), so the sound code can be verified.
+    uint8_t apu[0x18];
+    uint32_t apu_hash;
+
     // Joypad 1: bit 0 = A ... bit 7 = Right, in $4016 read order.
     uint8_t pad, pad_shift, strobe;
 

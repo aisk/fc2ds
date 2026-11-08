@@ -171,8 +171,14 @@ void vnesWrite(uint16_t a, uint8_t v)
             vnes->pad_shift = vnes->pad;
         return;
     }
+    if (a < 0x4018) {
+        vnes->apu[a - 0x4000] = v;
+        vnes->apu_hash = vnes->apu_hash * 31 + ((uint32_t)a << 8 | v);
+        if (a != 0x4017)
+            return;
+    }
     if (a < 0x6000)
-        return; // APU
+        return;
     if (a < 0x8000) {
         vnes->prg_ram[a & 0x1FFF] = v;
         return;

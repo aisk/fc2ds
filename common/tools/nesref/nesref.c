@@ -8,7 +8,8 @@
 // With --compare, two machines run in lockstep: "ref" runs the original code,
 // "port" runs it with the game's hooks (ported C routines) in place of the
 // original routines. After every tick their RAM, PPU memory (nametables,
-// palette, OAM) and PPU/MMC3 registers are compared and the first difference
+// palette, OAM), PPU/MMC3/APU registers and the sequence of APU writes are
+// compared and the first difference
 // is reported.
 //
 // Usage: nesref ROM --tick-pc ADDR [options]
@@ -426,6 +427,8 @@ int main(int argc, char **argv)
             { "irq enabled", &p->irq_enabled, &q->irq_enabled, 1 },
             { "ppuctrl", &p->ctrl, &q->ctrl, 1 },
             { "ppumask", &p->mask, &q->mask, 1 },
+            { "apu", p->apu, q->apu, sizeof p->apu },
+            { "apu write hash", (const uint8_t *)&p->apu_hash, (const uint8_t *)&q->apu_hash, 4 },
         };
         for (size_t k = 0; k < sizeof areas / sizeof areas[0]; k++) {
             for (int i = 0; i < areas[k].size; i++) {
