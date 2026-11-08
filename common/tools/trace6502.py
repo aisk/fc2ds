@@ -178,6 +178,7 @@ class Tracer:
     unresolved: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     indirect: list[str] = field(default_factory=list)
+    insns: dict = field(default_factory=dict)  # (seg, addr) -> (mnem, mode, operand)
     auto_tables: set = field(default_factory=set)  # (seg, start) whose length was guessed
     truncate: dict = field(default_factory=dict)  # (seg, start) -> entries, for the next pass
 
@@ -359,6 +360,7 @@ class Tracer:
             elif n == 3:
                 operand = seg.byte(addr + 1) | (seg.byte(addr + 2) << 8)
             nxt = addr + n
+            self.insns[(seg.name, addr)] = (mnem, mode, operand)
 
             if mnem == "brk":
                 self.err(seg, entry, f"{seg.name}:{addr:04X} brk reached (probably data)")
@@ -442,7 +444,7 @@ def label_line(name: str, addr: int, comment: str = "", size: int = 0) -> str:
     if size > 1:
         s += f" SIZE {size};"
     if comment:
-        s += ' COMMENT "' + comment.replace('"', "'") + '";'
+        s += ' COMMENT "' + comment.replace("\\", "/").replace('"', "'") + '";'
     return s + " };"
 
 
@@ -494,10 +496,111 @@ def write_info(seg: Segment, lay: Layout, names, ram: dict[int, tuple[str, str, 
             add(name or f"{lay.fixed.entries[addr]}{addr:04X}", addr)
     for addr, reg in HW_REGS.items():
         add(reg, addr)
-    for addr, (name, comment, size) in sorted(ram.items()):
+    ram_items = sorted(ram.items())
+    for i, (addr, (name, comment, size)) in enumerate(ram_items):
+        # da65 rejects a label inside another label's range: clip the range.
+        if i + 1 < len(ram_items):
+            size = min(size, ram_items[i + 1][0] - addr)
         add(name, addr, comment, size)
 
     (outdir / f"{seg.name}.info").write_text("\n".join(lines) + "\n")
+
+
+RMW = {"inc", "dec", "asl", "lsr", "rol", "ror"}
+WRITES = {"sta", "stx", "sty"}
+
+
+def ram_xref(lay: Layout, tr: Tracer, ram: dict) -> list[str]:
+    """Who reads/writes each RAM address ($0000-$07FF), grouped by routine."""
+    routine_starts = {}
+    for s in lay.segments():
+        routine_starts[s.name] = sorted(a for a, p in s.entries.items() if p != "L")
+    import bisect
+
+    def routine(sname: str, addr: int) -> str:
+        starts = routine_starts[sname]
+        i = bisect.bisect_right(starts, addr) - 1
+        return f"{sname}:{starts[i]:04X}" if i >= 0 else f"{sname}:?"
+
+    use: dict[int, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
+    for (sname, addr), (mnem, mode, operand) in tr.insns.items():
+        if mode in ("imp", "acc", "imm", "rel") or mnem in ("jmp", "jsr"):
+            continue
+        if operand >= 0x800:
+            continue
+        r = routine(sname, addr)
+        if mode in ("izx", "izy"):
+            use[operand]["p"].add(r)
+            use[operand + 1]["p"].add(r)
+            kind = "w" if mnem in WRITES else "r"
+            use[operand]["*" + kind].add(r)
+            continue
+        idx = mode in ("zpx", "zpy", "abx", "aby")
+        if mnem in WRITES:
+            k = "w"
+        elif mnem in RMW:
+            k = "m"
+        else:
+            k = "r"
+        use[operand][k + ("x" if idx else "")].add(r)
+
+    out = ["# RAM cross reference (generated)",
+           "# r/w/m = read/write/read-modify-write, x = indexed, p = used as pointer, *r/*w = through pointer",
+           ""]
+    for addr in sorted(use):
+        name = ram.get(addr, ("", "", 1))[0]
+        parts = []
+        for k in ("w", "wx", "m", "mx", "r", "rx", "p", "*r", "*w"):
+            if use[addr].get(k):
+                rs = sorted(use[addr][k])
+                more = f" +{len(rs) - 6}" if len(rs) > 6 else ""
+                parts.append(f"{k}:{len(rs)} [{' '.join(rs[:6])}{more}]")
+        out.append(f"${addr:04X} {name:16s} " + "  ".join(parts))
+    return out
+
+
+def names_from_markdown(path: Path) -> tuple[dict, dict]:
+    """Read RAM and routine names from Markdown tables.
+
+    A row whose first cell is `$XX` or `$XXXX-$YYYY` names RAM (second cell is
+    the name, third the meaning). A row whose first cell is `seg:XXXX` names a
+    routine (second cell name, third a comment).
+    """
+    import re
+    ram: dict[int, tuple[str, str, int]] = {}
+    labels: dict[str, dict[int, tuple[str, str]]] = defaultdict(dict)
+    conflicts: list[str] = []
+    for line in path.read_text().splitlines():
+        if not line.lstrip().startswith("|"):
+            continue
+        row = line.strip()[1:].rstrip("|")
+        cells = [c.strip().replace("`", "").replace("\\|", "|") for c in re.split(r"(?<!\\)\|", row)]
+        if len(cells) < 2:
+            continue
+        # Name cell: one identifier, optionally followed by a "(guess)" style note.
+        m = re.fullmatch(r"([A-Za-z_][A-Za-z0-9_]*)(\s*\(.*\))?", cells[1])
+        if not m:
+            continue
+        name = m.group(1)
+        comment = cells[2] if len(cells) > 2 else ""
+        if m.group(2):
+            comment = f"{m.group(2).strip()} {comment}"
+        first = re.sub(r",\s*[xy]$", "", cells[0])
+        m = re.fullmatch(r"\$([0-9A-Fa-f]{2,4})(?:\s*-\s*\$?([0-9A-Fa-f]{2,4}))?", first)
+        if m:
+            a = int(m.group(1), 16)
+            b = int(m.group(2), 16) if m.group(2) else a
+            if a in ram and ram[a][0] != name:
+                conflicts.append(f"{path.name}: ${a:04X} {name} vs {ram[a][0]}")
+                continue
+            ram[a] = (name, comment, b - a + 1)
+            continue
+        m = re.fullmatch(r"(\w+):\$?([0-9A-Fa-f]{4})", first)
+        if m:
+            labels[m.group(1)][int(m.group(2), 16)] = (name, comment)
+    for c in conflicts:
+        print(f"name conflict (first one wins): {c}")
+    return ram, labels
 
 
 def parse_ram(cfg: dict) -> dict[int, tuple[str, str, int]]:
@@ -571,6 +674,15 @@ def main() -> None:
     outdir.mkdir(parents=True, exist_ok=True)
     names = parse_names(cfg)
     ram = parse_ram(cfg)
+    for md in cfg.get("names_from", []):
+        md_ram, md_labels = names_from_markdown(Path(args.config).parent / md)
+        for k, v in md_ram.items():
+            if k in ram and ram[k][0] != v[0]:
+                print(f"name conflict (first one wins): {md}: ${k:04X} {v[0]} vs {ram[k][0]}")
+            ram.setdefault(k, v)
+        for seg, items in md_labels.items():
+            for k, v in items.items():
+                names[seg].setdefault(k, v)
     for s in lay.segments():
         (outdir / f"{s.name}.bin").write_bytes(s.data)
         write_info(s, lay, names, ram, tr.tables, outdir)
@@ -590,6 +702,7 @@ def main() -> None:
     report += ["", f"## Guessed tables shortened because code runs into them ({len(shortened)})"]
     report += [f"{seg}:{addr:04X} -> {n} entries" for (seg, addr), n in sorted(shortened.items())]
     (outdir / "report.txt").write_text("\n".join(report) + "\n")
+    (outdir / "ramxref.txt").write_text("\n".join(ram_xref(lay, tr, ram)) + "\n")
     print("\n".join(report[:2 + len(lay.segments())]))
     print(f"unresolved {len(set(tr.unresolved))}, unexplained indirect {len(set(indirect))}, "
           f"errors {len(set(tr.errors))} (see {outdir / 'report.txt'})")
