@@ -93,6 +93,7 @@ void ndsVideoBuild(const VrasterFrame *f, const NdsLayout *lay)
 {
     Engine *top = &engines[0], *bot = &engines[1];
     ndsScreenBuild(&top->screen, &top->bg_cache, &top->obj_cache, f, lay->top_first, lay->top_end, 0, 1);
+    top->screen.right = 256 - lay->top_crop_right;
     top->has_frame = 1;
     if (lay->bot_end > lay->bot_first) {
         ndsScreenBuild(&bot->screen, &bot->bg_cache, &bot->obj_cache, f, lay->bot_first, lay->bot_end,
@@ -165,12 +166,13 @@ static void commit(Engine *e)
         }
     }
 
-    // X1 below X0 means "to the right edge", so window 0 covers x 8-255.
+    // Window 0 covers x 8 to s->right (X1 = 0 means the right edge), window
+    // 1 the left column x 0-7. Outside both only the backdrop shows.
     uint16_t in0 = (s->bg_on ? 0x01 : 0) | (s->obj_on ? 0x10 : 0);
     uint16_t in1 = (s->bg_on && s->left_bg ? 0x01 : 0) | (s->obj_on && s->left_obj ? 0x10 : 0);
     if (e->sub) {
         SUB_WIN0_X0 = 8;
-        SUB_WIN0_X1 = 0;
+        SUB_WIN0_X1 = s->right & 0xFF;
         SUB_WIN1_X0 = 0;
         SUB_WIN1_X1 = 8;
         SUB_WIN0_Y0 = SUB_WIN1_Y0 = s->first;
@@ -178,7 +180,7 @@ static void commit(Engine *e)
         SUB_WIN_IN = (in0 | in1 << 8) | 0x0202;
     } else {
         WIN0_X0 = 8;
-        WIN0_X1 = 0;
+        WIN0_X1 = s->right & 0xFF;
         WIN1_X0 = 0;
         WIN1_X1 = 8;
         WIN0_Y0 = WIN1_Y0 = s->first;

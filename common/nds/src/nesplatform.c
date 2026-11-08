@@ -87,7 +87,7 @@ static void show_load(void)
 // The visible lines are done: show them at the next NDS vblank.
 static void present(void)
 {
-    NdsLayout layout;
+    NdsLayout layout = { 0 };
     vrasterBuild(&frame);
     GameScreenLayout(&frame, &layout);
     ndsVideoBuild(&frame, &layout);

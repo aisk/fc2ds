@@ -46,6 +46,9 @@ typedef struct {
     // PPUMASK left column: BG / sprites shown in x 0-7 (games hide it to
     // cover the column being redrawn while scrolling).
     int left_bg, left_obj;
+    // Pixels from this x on show only the backdrop (256 = none), to hide
+    // what the NES leaves at the right edge while scrolling.
+    int right;
     // NES colour indices: backdrop, BG palettes 0-3, sprite palettes 0-3
     // (colour 0 of each palette is transparent).
     uint8_t backdrop;
@@ -64,6 +67,7 @@ void ndsScreenBuild(NdsScreen *s, NdsTileCache *bg, NdsTileCache *obj, const Vra
 typedef struct {
     int top_first, top_end;          // NES lines on the top screen, from line 0
     int bot_first, bot_end, bot_dst; // NES lines on the bottom screen, from line bot_dst
+    int top_crop_right;              // top screen: hide this many pixels at the right edge
 } NdsLayout;
 
 // Provided by the game.

@@ -476,9 +476,10 @@ static void write_nds_ppm(const char *path)
     ndsTileCacheInit(&bg2);
     ndsTileCacheInit(&obj2);
     vrasterBuild(&frame);
-    NdsLayout lay;
+    NdsLayout lay = { 0 };
     GameScreenLayout(&frame, &lay);
     ndsScreenBuild(&top, &bg, &obj, &frame, lay.top_first, lay.top_end, 0, 1);
+    top.right = 256 - lay.top_crop_right;
     ndsScreenCompose(&top, &bg, &obj, chr4, pix[0]);
     if (lay.bot_end > lay.bot_first) {
         ndsScreenBuild(&bot, &bg2, &obj2, &frame, lay.bot_first, lay.bot_end, lay.bot_dst, 0);

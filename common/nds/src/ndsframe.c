@@ -110,6 +110,7 @@ NDSFRAME_HOT void ndsScreenBuild(NdsScreen *s, NdsTileCache *bg, NdsTileCache *o
     s->obj_on = sprites && (top->mask & 0x10);
     s->left_bg = (top->mask & 0x02) != 0;
     s->left_obj = (top->mask & 0x04) != 0;
+    s->right = 256;
 
     // Per-line scroll, and the map cells the lines show. A cell is built
     // with the first line that shows it (its CHR banks and mirroring); lines
@@ -200,7 +201,7 @@ void ndsScreenCompose(const NdsScreen *s, const NdsTileCache *bg, const NdsTileC
             continue;
         if (s->bg_on) {
             int py = (y + s->vofs[y]) & 511;
-            for (int x = s->left_bg ? 0 : 8; x < 256; x++) {
+            for (int x = s->left_bg ? 0 : 8; x < s->right; x++) {
                 int px = (x + s->hofs[y]) & 511;
                 uint16_t e = s->map[map_index(px >> 3, py >> 3)];
                 uint16_t key = bg->key[e & 0x3FF];
@@ -231,7 +232,7 @@ void ndsScreenCompose(const NdsScreen *s, const NdsTileCache *bg, const NdsTileC
             int behind = ((e->attr2 >> 10) & 3) == 2;
             for (int px = 0; px < 8; px++) {
                 int x = sx + px;
-                if (x < (s->left_obj ? 0 : 8) || x > 255)
+                if (x < (s->left_obj ? 0 : 8) || x >= s->right)
                     continue;
                 int tx = (e->attr1 & (1 << 12)) ? 7 - px : px;
                 int ty = (e->attr1 & (1 << 13)) ? 7 - r : r;

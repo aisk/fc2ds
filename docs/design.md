@@ -84,7 +84,7 @@ Note: RAM names from `ram.h` are macros; include the vnes/ndsframe headers befor
 
 ### Renderer TODO
 
-- Screen edge flicker while scrolling: the NES hides the column being streamed under the PPUMASK left-column mask, which the NDS now does too (window 1 covers x 0-7). If attribute glitches remain at the right edge (horizontal mirroring), crop or widen the plane view there.
+- Screen edges while scrolling: the NES hides the column being streamed under the PPUMASK left-column mask, which the NDS does too (window 1 covers x 0-7). With horizontal mirroring the right edge shows the wrapped left column and half-streamed columns, which a TV's overscan hid; `NdsLayout.top_crop_right` hides it (the first port: 8 px in play). Better later: draw the 33rd column from the stage data into the 64-column NDS map, so nothing needs cropping.
 - Flicker transparency: some objects are drawn every other frame on purpose so that they look half transparent on a CRT (e.g. the spider threads in the first port stage 1). Render them steady with NDS alpha blending instead: either detect sprites that alternate frame by frame in ndsframe, or let the game mark them (per object type).
 - Colour: calibrated palette, emphasis bits, smooth fades (section 3).
 
