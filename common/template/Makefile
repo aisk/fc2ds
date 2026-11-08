@@ -16,6 +16,6 @@ GEN_ASSETS	:= build/gen/chr.bin build/gen/prg.bin
 
 include ../../common/nds/game.mk
 
-$(GENDIR)/chr.bin $(GENDIR)/prg.bin &: $(ROM_FILE) $(TOOLS)/romextract.py $(TOOLS)/nesrom.py
+$(GENDIR)/chr.bin $(GENDIR)/prg.bin &: $(ROM_FILE) Makefile $(TOOLS)/romextract.py $(TOOLS)/nesrom.py
 	@echo "  EXTRACT $<"
 	$(V)$(PYTHON) $(TOOLS)/romextract.py $< --sha1 $(ROM_SHA1) --chr $(GENDIR)/chr.bin --prg $(GENDIR)/prg.bin
