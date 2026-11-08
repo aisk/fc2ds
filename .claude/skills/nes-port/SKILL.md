@@ -19,18 +19,21 @@ The process is `docs/porting-guide.md`. Read it first, then `docs/design.md` (th
 
 ## 2. Work the phase
 
-Follow the phase in `docs/porting-guide.md`. Use `games/<name>` as the worked example for every file type:
+Follow the phase in `docs/porting-guide.md`. The files of a game start from `common/template` (`newgame.py` copies it). If another game exists under `games/` (each is its own repository, ignored by this one), use it as the worked example for every file type:
 - `disasm/layout.toml`
 - `ram.md`, `notes/*.md`, `fixes.md`
-- `verify/*.txt`, `verify/mkstages.py`
+- `verify/*.txt`
 - `port/*.c`, `port/port.h`, `port/screen.c`, `port/main.c`
 - `src/game.c`
+
+A new game directory gets its own git repository (`git init` in `games/<name>`). Commit the game there, and shared code (`common/`, `docs/`) in this repository.
 
 Rules that hold in every phase:
 
 - Build and verify in a login shell: `bash -lc 'make'`, `bash -lc 'make verify'`.
 - From phase 4 on, `make verify` must pass after every change to `port/` and `common/`. The port matches the original tick by tick, and only the NDS side may differ.
 - Never commit ROMs or anything generated from them (listings, dumped text, extracted data). `build/` is ignored.
+- Nothing from a game goes into this repository: no addresses, names or text of a commercial game in `common/` or `docs/`.
 - Commit at the end of each step, when the user has asked for commits. Follow the existing history: a gitmoji subject in English, no body. Code and comments are in English.
 - Update the README checklist and "Next steps" in the same commit as the work, so the next session can pick it up.
 - Things only the user can judge (melonDS checks, listening, translation choices) go to `games/<name>/REVIEW.md`, which is not committed (see `.git/info/exclude`). Keep working instead of waiting for them.

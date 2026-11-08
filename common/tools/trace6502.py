@@ -11,7 +11,7 @@ Everything it can prove is code becomes a CODE range, jump tables become
 ADDRTABLE, the rest is left as BYTETABLE. Hand-written names and comments from
 the config are merged in, so the generated info files never need hand edits.
 
-Config: TOML, see games/<name>/disasm/layout.toml.
+Config: TOML, see common/template/disasm/layout.toml.
 """
 from __future__ import annotations
 

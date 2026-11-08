@@ -76,16 +76,16 @@ Everything below is game independent and meant to be reused by every port:
 What a game provides:
 
 1. `port/`: the ported code, with `GameMain()` (reset + main loop calling `portWaitNmi()` and `portTickEnd()`), `Nmi()` and `Irq()`.
-2. `GameScreenLayout()`: which NES lines go to the top screen (cropped to 192, e.g. following the player) and which to the bottom screen (e.g. the status bar below a split). See `games/<name>/port/screen.c`.
+2. `GameScreenLayout()`: which NES lines go to the top screen (cropped to 192, e.g. following the player) and which to the bottom screen (e.g. the status bar below a split). For example: find the status bar split from the per-line CHR banks, send it to the bottom screen and crop the play area around the player.
 3. `src/`: `main()` filling a `NesPlatform` (PRG/CHR from the ROM extracted at build time, the NMI/IRQ handlers, `GameMain`) and calling `nesPlatformRun()`.
-4. Optionally its own bottom screen (`NesPlatform.frame`, once per frame in vblank): `common/nds/subscreen.[ch]` is a 256x192 canvas on sub BG1, above the NES picture, shared with the subtitles. The game redraws its status bar there from NES RAM, with the original icons from CHR and numbers in the 12 px font, and adds what the NES had no room for (the first port: owned items, stage, boss HP, a stage map with the player; `games/<name>/src/hud.c`). `GameScreenLayout()` then leaves the NES status bar out. It only reads RAM, so `make verify` is not affected.
+4. Optionally its own bottom screen (`NesPlatform.frame`, once per frame in vblank): `common/nds/subscreen.[ch]` is a 256x192 canvas on sub BG1, above the NES picture, shared with the subtitles. The game redraws its status bar there from NES RAM, with the original icons from CHR and numbers in the 12 px font, and adds what the NES had no room for (for example owned items, the stage, boss HP and a stage map with the player). `GameScreenLayout()` then leaves the NES status bar out. It only reads RAM, so `make verify` is not affected.
 
 Note: RAM names from `ram.h` are macros; include the vnes/ndsframe headers before `port.h` where both are needed, since names like `mirroring` clash with struct fields.
 
 ### Renderer TODO
 
-- Screen edges while scrolling: the NES hides the column being streamed under the PPUMASK left-column mask, which the NDS does too (window 1 covers x 0-7). With horizontal mirroring the right edge shows the wrapped left column and half-streamed columns, which a TV's overscan hid; `NdsLayout.top_crop_right` hides it (the first port: 8 px in play). Better later: draw the 33rd column from the stage data into the 64-column NDS map, so nothing needs cropping.
-- Flicker transparency: some objects are drawn every other frame on purpose so that they look half transparent on a CRT (e.g. the spider threads in the first port stage 1). Render them steady with NDS alpha blending instead: either detect sprites that alternate frame by frame in ndsframe, or let the game mark them (per object type).
+- Screen edges while scrolling: the NES hides the column being streamed under the PPUMASK left-column mask, which the NDS does too (window 1 covers x 0-7). With horizontal mirroring the right edge shows the wrapped left column and half-streamed columns, which a TV's overscan hid; `NdsLayout.top_crop_right` hides it (8 px in play is enough). Better later: draw the 33rd column from the stage data into the 64-column NDS map, so nothing needs cropping.
+- Flicker transparency: some objects are drawn every other frame on purpose so that they look half transparent on a CRT (e.g. thin threads or ghosts). Render them steady with NDS alpha blending instead: either detect sprites that alternate frame by frame in ndsframe, or let the game mark them (per object type).
 - Colour: calibrated palette, emphasis bits, smooth fades (section 3).
 
 ## 5. Workflow per game

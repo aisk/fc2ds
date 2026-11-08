@@ -1,5 +1,5 @@
 # Disassembly layout for @TITLE@, consumed by common/tools/trace6502.py
-# (see games/<name>/disasm/layout.toml for a complete example).
+# (a finished game has one region per PRG page, plus labels and data ranges).
 #
 # The tracer models PRG as one fixed segment plus switchable pages that share
 # one CPU window. The values below are a first guess from the mapper

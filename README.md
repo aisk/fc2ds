@@ -23,7 +23,7 @@ common/
   vnes/          virtual NES the ported code runs on (MMC3, PPU state, raster log, APU synth)
   nds/           NDS runtime: frame mapping, video, platform loop, sound stream, text, subtitles
   template/      starting point of a new game (newgame.py)
-games/<name>/
+games/<name>/    one game, in its own git repository (git-ignored here)
   README.md      status checklist, next steps, technical notes
   disasm/        layout.toml for the tracer (listings are generated, not committed)
   ram.md notes/  RAM map and notes on the game's systems
@@ -35,10 +35,20 @@ games/<name>/
 docs/            design, porting guide, setup
 ```
 
-## Games
+## Games and copyright
 
-| Directory | Game | Mapper | Status |
-|---|---|---|---|
-| `games/<name>` | (private) | MMC3 | playable with sound and subtitles |
+This repository holds only the shared code, tools and documentation. A port is
+derived from the original game (its code translated to C, its data formats,
+its text), so each game lives in its own repository under `games/<name>`,
+which this repository ignores. Keep ports of commercial games private.
+ROMs are never committed anywhere: provide your own dump.
+
+The process was worked out on a full port of a commercial MMC3 game, kept
+private for that reason. A public example based on a freely licensed homebrew
+game is planned.
+
+Contributions to the shared parts are welcome, for example support for more
+mappers in `common/vnes` and `common/tools/nesref`. Code or data from
+commercial games is not accepted.
 
 See `docs/design.md` for the overall approach.
