@@ -2,6 +2,15 @@
 
 #include <string.h>
 
+// Built every frame for both screens: on the NDS run it from ITCM as ARM
+// code, away from main RAM wait states.
+#if defined(ARM9)
+#include <nds/ndstypes.h>
+#define NDSFRAME_HOT ITCM_CODE ARM_CODE
+#else
+#define NDSFRAME_HOT
+#endif
+
 void ndsTileCacheInit(NdsTileCache *c)
 {
     memset(c->slot_of, 0xFF, sizeof c->slot_of);
@@ -14,7 +23,7 @@ void ndsTileCacheInit(NdsTileCache *c)
 
 // Slot for NES CHR tile `key`, loading it into a slot not used in this
 // frame if needed.
-static uint16_t cache_get(NdsTileCache *c, uint16_t key)
+static inline uint16_t cache_get(NdsTileCache *c, uint16_t key)
 {
     uint16_t s = c->slot_of[key];
     if (s != 0xFFFF) {
@@ -49,13 +58,22 @@ static int map_index(int col, int row)
     return ((row >> 5) * 2 + (col >> 5)) * 1024 + (row & 31) * 32 + (col & 31);
 }
 
-// Fill the map cell (col, row) of the plane as the line shows it.
-static void build_cell(NdsScreen *s, NdsTileCache *bg, const VrasterLine *l, int col, int row)
+// vrasterNametable, inlined for the cell loop.
+static inline uint8_t nametable(const VrasterLine *l, int col, int row)
 {
-    uint8_t tile = vrasterNametable(l, col, row);
+    int a = (row & 32) << 6 | (col & 32) << 5 | (row & 31) << 5 | (col & 31);
+    if (l->mirroring) // horizontal
+        return vnes->vram[((a >> 1) & 0x400) | (a & 0x3FF)];
+    return vnes->vram[a & 0x7FF];
+}
+
+// Fill the map cell (col, row) of the plane as the line shows it.
+static inline void build_cell(NdsScreen *s, NdsTileCache *bg, const VrasterLine *l, int col, int row)
+{
+    uint8_t tile = nametable(l, col, row);
     int nrow = row & 31, ncol = col & 31;
     uint16_t aaddr = 0x3C0 + (nrow >> 2) * 8 + (ncol >> 2);
-    uint8_t a = vrasterNametable(l, (col & 32) | (aaddr & 31), (row & 32) | (aaddr >> 5));
+    uint8_t a = nametable(l, (col & 32) | (aaddr & 31), (row & 32) | (aaddr >> 5));
     int pal = (a >> (((nrow & 2) << 1) | (ncol & 2))) & 3;
     uint16_t base = (l->ctrl & 0x10) ? 0x1000 : 0;
     uint16_t slot = cache_get(bg, chr_key(l, base + tile * 16));
@@ -74,8 +92,8 @@ static void add_sprite(NdsScreen *s, NdsTileCache *obj, const VrasterLine *l, ui
     e->attr2 = (uint16_t)(slot | (at & 0x20 ? 2 : 0) << 10 | (at & 3) << 12);
 }
 
-void ndsScreenBuild(NdsScreen *s, NdsTileCache *bg, NdsTileCache *obj, const VrasterFrame *f,
-                    int nes_first, int nes_end, int dst, int sprites)
+NDSFRAME_HOT void ndsScreenBuild(NdsScreen *s, NdsTileCache *bg, NdsTileCache *obj, const VrasterFrame *f,
+                                 int nes_first, int nes_end, int dst, int sprites)
 {
     bg->stamp++;
     obj->stamp++;
@@ -109,7 +127,12 @@ void ndsScreenBuild(NdsScreen *s, NdsTileCache *bg, NdsTileCache *obj, const Vra
         if (i < s->first || i >= s->end || !s->bg_on)
             continue;
         int row = (l->y >> 3) & 63;
-        int col0 = l->x >> 3;
+        int col0 = (l->x >> 3) & 63;
+        // The 33 columns the line shows, as a mask: most lines only show
+        // cells built by the line above.
+        uint64_t want = 0x1FFFFFFFFull << col0 | (col0 > 31 ? 0x1FFFFFFFFull >> (64 - col0) : 0);
+        if ((cell_done[row] & want) == want)
+            continue;
         for (int c = 0; c <= 32; c++) {
             int col = (col0 + c) & 63;
             if (cell_done[row] >> col & 1)

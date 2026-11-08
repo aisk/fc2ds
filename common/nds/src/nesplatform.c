@@ -60,6 +60,27 @@ static uint8_t read_pad(void)
            (k & KEY_LEFT ? 0x40 : 0) | (k & KEY_RIGHT ? 0x80 : 0);
 }
 
+// CPU load: timer 2 counts from one vblank to the point where the next
+// frame is ready (33.5 MHz / 256, so an NDS frame is about 2188 ticks and
+// the counter wraps after half a second).
+// Holding L+R shows the busiest frame of the last second as the bottom
+// screen's backdrop: green below half, yellow below 90%, red when frames
+// are dropped.
+#define FRAME_TICKS 2188
+
+static uint16_t load_max, load_shown;
+static int load_frames;
+
+static void show_load(void)
+{
+    if ((keysHeld() & (KEY_L | KEY_R)) != (KEY_L | KEY_R))
+        return;
+    uint16_t c = load_shown < FRAME_TICKS / 2   ? RGB15(0, 20, 0)
+                 : load_shown < FRAME_TICKS * 9 / 10 ? RGB15(24, 24, 0)
+                                                    : RGB15(28, 0, 0);
+    BG_PALETTE_SUB[0] = c;
+}
+
 // The visible lines are done: show them at the next NDS vblank.
 static void present(void)
 {
@@ -67,8 +88,22 @@ static void present(void)
     vrasterBuild(&frame);
     GameScreenLayout(&frame, &layout);
     ndsVideoBuild(&frame, &layout);
+
+    uint16_t busy = TIMER_DATA(2);
+    if (busy > load_max)
+        load_max = busy;
+    if (++load_frames == 60) {
+        load_shown = load_max;
+        load_max = 0;
+        load_frames = 0;
+    }
+
     swiWaitForVBlank();
+    TIMER_CR(2) = 0;
+    TIMER_DATA(2) = 0;
+    TIMER_CR(2) = TIMER_ENABLE | TIMER_DIV_256;
     ndsVideoCommit();
+    show_load();
     mmStreamUpdate();
     vnes->pad = read_pad();
 }

@@ -17,7 +17,9 @@ typedef struct {
     int bg;
     NdsScreen screen;
     NdsTileCache bg_cache, obj_cache;
-    uint16_t scroll[192][2]; // HOFS, VOFS per line, read by HBlank DMA
+    // HOFS, VOFS per line, read by HBlank DMA (which also fires after line
+    // 191, hence the extra entry).
+    uint16_t scroll[193][2];
     int has_frame;
 } Engine;
 
@@ -37,6 +39,30 @@ static void engine_init(Engine *e, int sub)
     volatile uint32_t *map = (uint32_t *)bgGetMapPtr(e->bg);
     for (int i = 0; i < 64 * 64 / 2; i++)
         map[i] = 0;
+}
+
+// Start a frame's per-line scroll: line 0 now, lines 1-191 by HBlank DMA
+// (it runs at the end of each line and sets up the next one). Done in the
+// VBlank interrupt every frame, so a frame the game takes too long for
+// shows the last one again instead of running the DMA past its table.
+static void start_scroll(Engine *e)
+{
+    int dma = e->sub ? 1 : 0;
+    volatile uint16_t *scroll_reg = e->sub ? &REG_BG0HOFS_SUB : &REG_BG0HOFS;
+    DMA_CR(dma) = 0;
+    if (!e->has_frame)
+        return;
+    scroll_reg[0] = e->scroll[0][0];
+    scroll_reg[1] = e->scroll[0][1];
+    DMA_SRC(dma) = (uint32_t)&e->scroll[1][0];
+    DMA_DEST(dma) = (uint32_t)scroll_reg;
+    DMA_CR(dma) = DMA_ENABLE | DMA_REPEAT | DMA_START_HBL | DMA_16_BIT | DMA_SRC_INC | DMA_DST_RESET | 2;
+}
+
+static void vblank(void)
+{
+    start_scroll(&engines[0]);
+    start_scroll(&engines[1]);
 }
 
 void ndsVideoInit(const uint8_t *chr, int chr_size)
@@ -59,6 +85,8 @@ void ndsVideoInit(const uint8_t *chr, int chr_size)
     SUB_WIN_OUT = 0;
     WIN_IN = 0x1F1F;
     SUB_WIN_IN = 0x1F1F;
+    irqSet(IRQ_VBLANK, vblank);
+    irqEnable(IRQ_VBLANK);
 }
 
 void ndsVideoBuild(const VrasterFrame *f, const NdsLayout *lay)
@@ -107,10 +135,7 @@ static void commit(Engine *e)
     volatile uint16_t *oam = e->sub ? OAM_SUB : OAM;
     uint16_t *bgpal = e->sub ? BG_PALETTE_SUB : BG_PALETTE;
     uint16_t *objpal = e->sub ? SPRITE_PALETTE_SUB : SPRITE_PALETTE;
-    int dma = e->sub ? 1 : 0;
-    volatile uint16_t *scroll_reg = e->sub ? &REG_BG0HOFS_SUB : &REG_BG0HOFS;
-
-    DMA_CR(dma) = 0;
+    DMA_CR(e->sub ? 1 : 0) = 0;
     if (!e->has_frame) {
         // Nothing on this screen: backdrop only.
         if (e->sub) {
@@ -160,18 +185,14 @@ static void commit(Engine *e)
         WIN_IN = in0 | in1 << 8;
     }
 
-    // Line 0 now, lines 1-191 by HBlank DMA (it runs at the end of each
-    // line and sets up the next one).
     for (int i = 0; i < 192; i++) {
         e->scroll[i][0] = s->hofs[i];
         e->scroll[i][1] = s->vofs[i];
     }
+    e->scroll[192][0] = s->hofs[191];
+    e->scroll[192][1] = s->vofs[191];
     DC_FlushRange(e->scroll, sizeof e->scroll);
-    scroll_reg[0] = e->scroll[0][0];
-    scroll_reg[1] = e->scroll[0][1];
-    DMA_SRC(dma) = (uint32_t)&e->scroll[1][0];
-    DMA_DEST(dma) = (uint32_t)scroll_reg;
-    DMA_CR(dma) = DMA_ENABLE | DMA_REPEAT | DMA_START_HBL | DMA_16_BIT | DMA_SRC_INC | DMA_DST_RESET | 2;
+    start_scroll(e);
 }
 
 void ndsVideoCommit(void)

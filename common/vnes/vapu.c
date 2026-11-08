@@ -2,16 +2,22 @@
 
 #include <string.h>
 
+// The sample loop runs ~33k times a second: on the NDS keep it in ITCM as
+// ARM code and its state in DTCM, away from main RAM wait states.
+#if defined(ARM9)
+#include <nds/ndstypes.h>
+#define VAPU_HOT ITCM_CODE ARM_CODE
+#define VAPU_STATE DTCM_BSS
+#else
+#define VAPU_HOT
+#define VAPU_STATE
+#endif
+
 static const uint8_t length_table[32] = {
     10, 254, 20, 2,  40, 4,  80, 6,  160, 8,  60, 10, 14, 12, 26, 14,
     12, 16,  24, 18, 48, 20, 96, 22, 192, 24, 72, 26, 16, 28, 32, 30,
 };
-static const uint8_t duty_table[4][8] = {
-    { 0, 1, 0, 0, 0, 0, 0, 0 },
-    { 0, 1, 1, 0, 0, 0, 0, 0 },
-    { 0, 1, 1, 1, 1, 0, 0, 0 },
-    { 1, 0, 0, 1, 1, 1, 1, 1 },
-};
+static const uint8_t duty_table[4] = { 0x02, 0x06, 0x1E, 0xF9 }; // bit n = step n
 static const uint16_t noise_period[16] = {
     4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068,
 };
@@ -22,30 +28,40 @@ typedef struct {
 } Envelope;
 
 typedef struct {
-    int enabled;
-    uint8_t length;
+    int32_t timer;  // CPU cycles until the next step
+    int32_t period; // CPU cycles per step
+    uint8_t step;
+    uint8_t level;  // current output (0-15)
+    uint8_t vol;    // output when the waveform is high, 0 when silenced
+    uint8_t duty;   // pulse: duty_table entry
+    uint8_t enabled, length;
     Envelope env;
-    // pulse
-    uint8_t duty, step;
-    uint16_t period;
+    uint16_t raw;   // pulse/triangle: 11-bit period register
+    // pulse sweep
     uint8_t sweep_on, sweep_period, sweep_neg, sweep_shift, sweep_div, sweep_reload;
     // triangle
     uint8_t linear, linear_reload_value, linear_reload, control;
     // noise
     uint8_t mode;
     uint16_t lfsr;
-    int32_t timer; // CPU cycles until the next step
 } Channel;
 
 static struct {
     Channel ch[4]; // pulse 1, pulse 2, triangle, noise
-    int five_step;
-    int32_t frame_cycle;
+    int five_step, frame_step;
+    int32_t frame_cycle, next_event;
     uint32_t cycle_frac, cycles_per_sample_fp; // 16.16 CPU cycles per sample
+    int32_t hp_prev_in, hp_prev_out, lp;
     int16_t pulse_mix[31];
     int16_t tnd_mix[203];
-    int32_t hp_prev_in, hp_prev_out, lp;
-} apu;
+} apu VAPU_STATE;
+
+// Frame counter events in CPU cycles (NTSC), 4-step and 5-step mode: four
+// quarter frames, then the end of the sequence.
+static const int32_t frame_events[2][5] = {
+    { 7457, 14913, 22371, 29829, 29830 },
+    { 7457, 14913, 22371, 37281, 37282 },
+};
 
 static void env_clock(Envelope *e)
 {
@@ -71,15 +87,35 @@ static int env_out(const Envelope *e)
 
 static int sweep_target(const Channel *c, int ones_complement)
 {
-    int delta = c->period >> c->sweep_shift;
+    int delta = c->raw >> c->sweep_shift;
     if (c->sweep_neg)
-        return c->period - delta - ones_complement;
-    return c->period + delta;
+        return c->raw - delta - ones_complement;
+    return c->raw + delta;
 }
 
 static int pulse_muted(const Channel *c, int idx)
 {
-    return c->period < 8 || sweep_target(c, idx == 0) > 0x7FF;
+    return c->raw < 8 || sweep_target(c, idx == 0) > 0x7FF;
+}
+
+// Recompute what depends on registers and counters rather than on the
+// waveform step: run after every write and frame counter event, so the
+// sample loop only has to step the waveforms.
+static void update(void)
+{
+    for (int i = 0; i < 2; i++) {
+        Channel *c = &apu.ch[i];
+        c->period = (c->raw + 1) * 2;
+        c->vol = c->length && !pulse_muted(c, i) ? (uint8_t)env_out(&c->env) : 0;
+        c->level = (c->duty >> c->step & 1) ? c->vol : 0;
+    }
+    Channel *t = &apu.ch[2];
+    t->period = t->raw + 1;
+    // Ultrasonic periods (< 2) would only alias: the triangle holds.
+    t->vol = t->length && t->linear && t->raw >= 2;
+    Channel *n = &apu.ch[3];
+    n->vol = n->length ? (uint8_t)env_out(&n->env) : 0;
+    n->level = (n->lfsr & 1) ? 0 : n->vol;
 }
 
 static void quarter_frame(void)
@@ -107,7 +143,7 @@ static void half_frame(void)
     for (int i = 0; i < 2; i++) {
         Channel *c = &apu.ch[i];
         if (!c->sweep_div && c->sweep_on && c->sweep_shift && !pulse_muted(c, i))
-            c->period = (uint16_t)sweep_target(c, i == 0);
+            c->raw = (uint16_t)sweep_target(c, i == 0);
         if (!c->sweep_div || c->sweep_reload) {
             c->sweep_div = c->sweep_period;
             c->sweep_reload = 0;
@@ -117,24 +153,25 @@ static void half_frame(void)
     }
 }
 
-// Frame counter in CPU cycles (NTSC).
-static void frame_counter(int cycles)
+// Quarter frames at the first four events, half frames at the second and
+// fourth, then the sequence restarts.
+static void frame_event(void)
 {
-    int32_t before = apu.frame_cycle;
-    apu.frame_cycle += cycles;
-    static const int32_t q4[4] = { 7457, 14913, 22371, 29829 };
-    static const int32_t q5[4] = { 7457, 14913, 22371, 37281 };
-    const int32_t *q = apu.five_step ? q5 : q4;
-    int32_t len = apu.five_step ? 37282 : 29830;
-    for (int i = 0; i < 4; i++) {
-        if (before < q[i] && apu.frame_cycle >= q[i]) {
+    const int32_t *ev = frame_events[apu.five_step];
+    while (apu.frame_cycle >= apu.next_event) {
+        int i = apu.frame_step;
+        if (i < 4) {
             quarter_frame();
             if (i == 1 || i == 3)
                 half_frame();
+            apu.frame_step++;
+        } else {
+            apu.frame_cycle -= ev[4];
+            apu.frame_step = 0;
         }
+        apu.next_event = ev[apu.frame_step];
     }
-    if (apu.frame_cycle >= len)
-        apu.frame_cycle -= len;
+    update();
 }
 
 void vapuWrite(uint16_t addr, uint8_t v)
@@ -146,7 +183,7 @@ void vapuWrite(uint16_t addr, uint8_t v)
         Channel *c = &apu.ch[r >> 2];
         switch (r & 3) {
         case 0:
-            c->duty = v >> 6;
+            c->duty = duty_table[v >> 6];
             c->env.loop = (v >> 5) & 1;
             c->env.constant = (v >> 4) & 1;
             c->env.volume = v & 15;
@@ -159,16 +196,17 @@ void vapuWrite(uint16_t addr, uint8_t v)
             c->sweep_reload = 1;
             break;
         case 2:
-            c->period = (c->period & 0x700) | v;
+            c->raw = (c->raw & 0x700) | v;
             break;
         case 3:
-            c->period = (uint16_t)((c->period & 0xFF) | (v & 7) << 8);
+            c->raw = (uint16_t)((c->raw & 0xFF) | (v & 7) << 8);
             if (c->enabled)
                 c->length = length_table[v >> 3];
             c->step = 0;
             c->env.start = 1;
             break;
         }
+        update();
         return;
     }
     Channel *t = &apu.ch[2], *n = &apu.ch[3];
@@ -178,10 +216,10 @@ void vapuWrite(uint16_t addr, uint8_t v)
         t->linear_reload_value = v & 0x7F;
         break;
     case 0x0A:
-        t->period = (t->period & 0x700) | v;
+        t->raw = (t->raw & 0x700) | v;
         break;
     case 0x0B:
-        t->period = (uint16_t)((t->period & 0xFF) | (v & 7) << 8);
+        t->raw = (uint16_t)((t->raw & 0xFF) | (v & 7) << 8);
         if (t->enabled)
             t->length = length_table[v >> 3];
         t->linear_reload = 1;
@@ -210,12 +248,17 @@ void vapuWrite(uint16_t addr, uint8_t v)
     case 0x17:
         apu.five_step = v >> 7;
         apu.frame_cycle = 0;
+        apu.frame_step = 0;
+        apu.next_event = frame_events[apu.five_step][0];
         if (apu.five_step) {
             quarter_frame();
             half_frame();
         }
         break;
+    default:
+        return;
     }
+    update();
 }
 
 void vapuInit(int sample_rate)
@@ -223,6 +266,7 @@ void vapuInit(int sample_rate)
     memset(&apu, 0, sizeof apu);
     apu.ch[3].lfsr = 1;
     apu.ch[3].period = noise_period[0];
+    apu.next_event = frame_events[0][0];
     apu.cycles_per_sample_fp = (uint32_t)(((uint64_t)VAPU_CPU_HZ << 16) / (uint32_t)sample_rate);
     // NES DAC curves (nesdev wiki "APU Mixer"), scaled so that the loudest
     // mix stays inside int16.
@@ -230,73 +274,75 @@ void vapuInit(int sample_rate)
         apu.pulse_mix[i] = (int16_t)(95.52 / (8128.0 / i + 100) * 28000);
     for (int i = 1; i < 203; i++)
         apu.tnd_mix[i] = (int16_t)(163.67 / (24329.0 / i + 100) * 28000);
+    update();
 }
 
-// Advance a channel's timer by `cycles` CPU cycles.
-static void run_pulse(Channel *c, int cycles)
+// Run a timer that went to zero or below: the number of steps it took.
+// Silenced channels may sit at ultrasonic periods (one step every few CPU
+// cycles), so long runs are divided out instead of looped.
+static inline int advance(int32_t *timer, int32_t period)
 {
-    c->timer -= cycles;
-    int32_t step = (c->period + 1) * 2;
-    while (c->timer <= 0) {
-        c->timer += step;
-        c->step = (c->step + 1) & 7;
+    int32_t t = *timer + period;
+    int n = 1;
+    if (t <= 0) {
+        int k = -t / period + 1;
+        n += k;
+        t += k * period;
     }
+    *timer = t;
+    return n;
 }
 
-static void run_triangle(Channel *c, int cycles)
-{
-    c->timer -= cycles;
-    int32_t step = c->period + 1;
-    while (c->timer <= 0) {
-        c->timer += step;
-        // Ultrasonic periods (< 2) would only alias: hold the output.
-        if (c->length && c->linear && c->period >= 2)
-            c->step = (c->step + 1) & 31;
-    }
-}
+static const uint8_t triangle_wave[32] = {
+    15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0,
+    0,  1,  2,  3,  4,  5,  6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+};
 
-static void run_noise(Channel *c, int cycles)
+VAPU_HOT void vapuRender(int16_t *out, int samples)
 {
-    c->timer -= cycles;
-    while (c->timer <= 0) {
-        c->timer += c->period;
-        int fb = (c->lfsr & 1) ^ ((c->lfsr >> (c->mode ? 6 : 1)) & 1);
-        c->lfsr = (uint16_t)((c->lfsr >> 1) | fb << 14);
-    }
-}
-
-static int pulse_level(const Channel *c, int idx)
-{
-    if (!c->length || pulse_muted(c, idx) || !duty_table[c->duty][c->step])
-        return 0;
-    return env_out(&c->env);
-}
-
-void vapuRender(int16_t *out, int samples)
-{
+    Channel *p1 = &apu.ch[0], *p2 = &apu.ch[1], *t = &apu.ch[2], *n = &apu.ch[3];
     for (int s = 0; s < samples; s++) {
         apu.cycle_frac += apu.cycles_per_sample_fp;
         int cycles = (int)(apu.cycle_frac >> 16);
         apu.cycle_frac &= 0xFFFF;
 
-        frame_counter(cycles);
-        run_pulse(&apu.ch[0], cycles);
-        run_pulse(&apu.ch[1], cycles);
-        run_triangle(&apu.ch[2], cycles);
-        run_noise(&apu.ch[3], cycles);
+        apu.frame_cycle += cycles;
+        if (apu.frame_cycle >= apu.next_event)
+            frame_event();
 
-        const Channel *t = &apu.ch[2], *n = &apu.ch[3];
-        int p = pulse_level(&apu.ch[0], 0) + pulse_level(&apu.ch[1], 1);
-        int tri = t->step < 16 ? 15 - t->step : t->step - 16;
-        int noi = (n->length && !(n->lfsr & 1)) ? env_out(&n->env) : 0;
-        int32_t x = apu.pulse_mix[p] + apu.tnd_mix[3 * tri + 2 * noi];
+        if ((p1->timer -= cycles) <= 0) {
+            p1->step = (p1->step + advance(&p1->timer, p1->period)) & 7;
+            p1->level = (p1->duty >> p1->step & 1) ? p1->vol : 0;
+        }
+        if ((p2->timer -= cycles) <= 0) {
+            p2->step = (p2->step + advance(&p2->timer, p2->period)) & 7;
+            p2->level = (p2->duty >> p2->step & 1) ? p2->vol : 0;
+        }
+        if ((t->timer -= cycles) <= 0) {
+            int steps = advance(&t->timer, t->period);
+            if (t->vol)
+                t->step = (t->step + steps) & 31;
+        }
+        if ((n->timer -= cycles) <= 0) {
+            uint32_t lfsr = n->lfsr;
+            int tap = n->mode ? 6 : 1;
+            do {
+                n->timer += n->period;
+                lfsr = lfsr >> 1 | ((lfsr ^ lfsr >> tap) & 1) << 14;
+            } while (n->timer <= 0);
+            n->lfsr = (uint16_t)lfsr;
+            n->level = (lfsr & 1) ? 0 : n->vol;
+        }
+
+        int32_t x = apu.pulse_mix[p1->level + p2->level] + apu.tnd_mix[3 * triangle_wave[t->step] + 2 * n->level];
 
         // ~90 Hz high-pass (removes the DC offset of the DAC curves) and a
-        // light low-pass against aliasing, as on the console.
+        // light low-pass against aliasing, as on the console. Division
+        // rounds to zero, so no DC is left when the input stops.
         int32_t hp = x - apu.hp_prev_in + apu.hp_prev_out * 251 / 256;
         apu.hp_prev_in = x;
         apu.hp_prev_out = hp;
-        apu.lp += (hp - apu.lp) / 2; // division rounds to zero: no DC left
+        apu.lp += (hp - apu.lp) / 2;
         int32_t y = apu.lp;
         out[s] = (int16_t)(y > 32767 ? 32767 : y < -32768 ? -32768 : y);
     }
