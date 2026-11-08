@@ -44,8 +44,8 @@ void ndsVideoInit(const uint8_t *chr, int chr_size)
     chr4 = malloc((size_t)chr_size * 2);
     nesChrTo4bpp(chr, chr4, chr_size / 16);
 
-    videoSetMode(MODE_0_2D | DISPLAY_BG0_ACTIVE | DISPLAY_SPR_ACTIVE | DISPLAY_SPR_1D | DISPLAY_WIN0_ON);
-    videoSetModeSub(MODE_0_2D | DISPLAY_BG0_ACTIVE | DISPLAY_SPR_ACTIVE | DISPLAY_SPR_1D | DISPLAY_WIN0_ON);
+    videoSetMode(MODE_0_2D | DISPLAY_BG0_ACTIVE | DISPLAY_SPR_ACTIVE | DISPLAY_SPR_1D | DISPLAY_WIN0_ON | DISPLAY_WIN1_ON);
+    videoSetModeSub(MODE_0_2D | DISPLAY_BG0_ACTIVE | DISPLAY_SPR_ACTIVE | DISPLAY_SPR_1D | DISPLAY_WIN0_ON | DISPLAY_WIN1_ON);
     vramSetPrimaryBanks(VRAM_A_MAIN_BG, VRAM_B_MAIN_SPRITE, VRAM_C_SUB_BG, VRAM_D_SUB_SPRITE);
     engine_init(&engines[0], 0);
     engine_init(&engines[1], 1);
@@ -53,11 +53,12 @@ void ndsVideoInit(const uint8_t *chr, int chr_size)
         OAM[i * 4] = ATTR0_DISABLED;
         OAM_SUB[i * 4] = ATTR0_DISABLED;
     }
-    // Window 0 = the lines that show the frame; nothing outside it.
+    // Windows 0 (x 8-255) and 1 (x 0-7, the NES left column) = the lines
+    // that show the frame; nothing outside them.
     WIN_OUT = 0;
     SUB_WIN_OUT = 0;
-    WIN_IN = 0x1F;     // BG0-3, OBJ inside window 0
-    SUB_WIN_IN = 0x1F;
+    WIN_IN = 0x1F1F;
+    SUB_WIN_IN = 0x1F1F;
 }
 
 void ndsVideoBuild(const VrasterFrame *f, const NdsLayout *lay)
@@ -113,11 +114,11 @@ static void commit(Engine *e)
     if (!e->has_frame) {
         // Nothing on this screen: backdrop only.
         if (e->sub) {
-            SUB_WIN0_Y0 = 0;
-            SUB_WIN0_Y1 = 0;
+            SUB_WIN0_Y0 = SUB_WIN0_Y1 = 0;
+            SUB_WIN1_Y0 = SUB_WIN1_Y1 = 0;
         } else {
-            WIN0_Y0 = 0;
-            WIN0_Y1 = 0;
+            WIN0_Y0 = WIN0_Y1 = 0;
+            WIN1_Y0 = WIN1_Y1 = 0;
         }
         bgpal[0] = 0;
         return;
@@ -138,18 +139,25 @@ static void commit(Engine *e)
         }
     }
 
+    // X1 below X0 means "to the right edge", so window 0 covers x 8-255.
+    uint16_t in0 = (s->bg_on ? 0x01 : 0) | (s->obj_on ? 0x10 : 0);
+    uint16_t in1 = (s->bg_on && s->left_bg ? 0x01 : 0) | (s->obj_on && s->left_obj ? 0x10 : 0);
     if (e->sub) {
-        SUB_WIN0_X0 = 0;
-        SUB_WIN0_X1 = 255;
-        SUB_WIN0_Y0 = s->first;
-        SUB_WIN0_Y1 = s->end;
-        SUB_WIN_IN = (s->bg_on ? 0x01 : 0) | (s->obj_on ? 0x10 : 0);
+        SUB_WIN0_X0 = 8;
+        SUB_WIN0_X1 = 0;
+        SUB_WIN1_X0 = 0;
+        SUB_WIN1_X1 = 8;
+        SUB_WIN0_Y0 = SUB_WIN1_Y0 = s->first;
+        SUB_WIN0_Y1 = SUB_WIN1_Y1 = s->end;
+        SUB_WIN_IN = in0 | in1 << 8;
     } else {
-        WIN0_X0 = 0;
-        WIN0_X1 = 255;
-        WIN0_Y0 = s->first;
-        WIN0_Y1 = s->end;
-        WIN_IN = (s->bg_on ? 0x01 : 0) | (s->obj_on ? 0x10 : 0);
+        WIN0_X0 = 8;
+        WIN0_X1 = 0;
+        WIN1_X0 = 0;
+        WIN1_X1 = 8;
+        WIN0_Y0 = WIN1_Y0 = s->first;
+        WIN0_Y1 = WIN1_Y1 = s->end;
+        WIN_IN = in0 | in1 << 8;
     }
 
     // Line 0 now, lines 1-191 by HBlank DMA (it runs at the end of each

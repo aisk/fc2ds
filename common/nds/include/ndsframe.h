@@ -43,6 +43,9 @@ typedef struct {
     // (the backend uses a window).
     int first, end;
     int bg_on, obj_on;
+    // PPUMASK left column: BG / sprites shown in x 0-7 (games hide it to
+    // cover the column being redrawn while scrolling).
+    int left_bg, left_obj;
     // NES colour indices: backdrop, BG palettes 0-3, sprite palettes 0-3
     // (colour 0 of each palette is transparent).
     uint8_t backdrop;

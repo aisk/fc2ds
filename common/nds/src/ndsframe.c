@@ -90,11 +90,15 @@ void ndsScreenBuild(NdsScreen *s, NdsTileCache *bg, NdsTileCache *obj, const Vra
     const VrasterLine *top = &f->line[nes_first];
     s->bg_on = (top->mask & 0x08) != 0;
     s->obj_on = sprites && (top->mask & 0x10);
+    s->left_bg = (top->mask & 0x02) != 0;
+    s->left_obj = (top->mask & 0x04) != 0;
 
-    // Per-line scroll, and the map cells the lines show. A cell row is
-    // built with the first line that shows it (its CHR banks and mirroring).
-    static uint8_t row_done[64];
-    memset(row_done, 0, sizeof row_done);
+    // Per-line scroll, and the map cells the lines show. A cell is built
+    // with the first line that shows it (its CHR banks and mirroring); lines
+    // of the same row may show different columns (e.g. switching nametables
+    // line by line), so this is tracked per cell, not per row.
+    static uint64_t cell_done[64];
+    memset(cell_done, 0, sizeof cell_done);
     for (int i = 0; i < 192; i++) {
         int line = i - dst + nes_first;
         if (i < s->first || i >= s->end)
@@ -105,12 +109,14 @@ void ndsScreenBuild(NdsScreen *s, NdsTileCache *bg, NdsTileCache *obj, const Vra
         if (i < s->first || i >= s->end || !s->bg_on)
             continue;
         int row = (l->y >> 3) & 63;
-        if (row_done[row])
-            continue;
-        row_done[row] = 1;
         int col0 = l->x >> 3;
-        for (int c = 0; c <= 32; c++)
-            build_cell(s, bg, l, (col0 + c) & 63, row);
+        for (int c = 0; c <= 32; c++) {
+            int col = (col0 + c) & 63;
+            if (cell_done[row] >> col & 1)
+                continue;
+            cell_done[row] |= 1ull << col;
+            build_cell(s, bg, l, col, row);
+        }
     }
 
     // Palettes. NES palette RAM: $3F00 backdrop, BG palettes at $3F01..,
@@ -171,7 +177,7 @@ void ndsScreenCompose(const NdsScreen *s, const NdsTileCache *bg, const NdsTileC
             continue;
         if (s->bg_on) {
             int py = (y + s->vofs[y]) & 511;
-            for (int x = 0; x < 256; x++) {
+            for (int x = s->left_bg ? 0 : 8; x < 256; x++) {
                 int px = (x + s->hofs[y]) & 511;
                 uint16_t e = s->map[map_index(px >> 3, py >> 3)];
                 uint16_t key = bg->key[e & 0x3FF];
@@ -202,7 +208,7 @@ void ndsScreenCompose(const NdsScreen *s, const NdsTileCache *bg, const NdsTileC
             int behind = ((e->attr2 >> 10) & 3) == 2;
             for (int px = 0; px < 8; px++) {
                 int x = sx + px;
-                if (x < 0 || x > 255)
+                if (x < (s->left_obj ? 0 : 8) || x > 255)
                     continue;
                 int tx = (e->attr1 & (1 << 12)) ? 7 - px : px;
                 int ty = (e->attr1 & (1 << 13)) ? 7 - r : r;

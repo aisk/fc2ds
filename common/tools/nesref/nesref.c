@@ -379,7 +379,7 @@ static void wav_frame_done(void)
 static void wav_header(uint32_t samples)
 {
     uint32_t data = samples * 2;
-    uint8_t h[44] = "RIFF....WAVEfmt \x10\0\0\0\1\0\1\0........\2\0\x10\0data....";
+    uint8_t h[45] = "RIFF....WAVEfmt \x10\0\0\0\1\0\1\0........\2\0\x10\0data....";
     uint32_t v[4] = { 36 + data, WAV_RATE, WAV_RATE * 2, data };
     int at[4] = { 4, 24, 28, 40 };
     for (int i = 0; i < 4; i++)
