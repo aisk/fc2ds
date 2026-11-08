@@ -77,11 +77,14 @@ LDFLAGS		:= $(ARCH) -L$(BLOCKSDS)/libs/libnds/lib -L$(BLOCKSDS)/libs/maxmod/lib 
 # Text and fonts
 # --------------
 # A game with translations sets TEXT_LANGS (e.g. ja en zh) and TEXT_BASE, the
-# YAML dumped from the ROM that gives positions and fallback text. Each
-# language becomes $(GENDIR)/text_<lang>.bin; Japanese gets font_ja.bin, the
-# other languages share font_zh.bin. Fonts come from common/fonts/fetch.sh.
-# TEXT_EXTRA lists more characters font_zh.bin needs (UI strings such as the
-# subtitle language names).
+# YAML dumped from the ROM that gives positions and fallback text, in the
+# language TEXT_BASE_LANG (default ja). Each language becomes
+# $(GENDIR)/text_<lang>.bin; Japanese gets font_ja.bin, the other languages
+# share font_zh.bin. Fonts come from common/fonts/fetch.sh. TEXT_EXTRA lists
+# more characters font_zh.bin needs (UI strings such as the subtitle
+# language names).
+
+TEXT_BASE_LANG	?= ja
 
 ifneq ($(strip $(TEXT_LANGS)),)
 
@@ -90,10 +93,10 @@ FONT_BDF_ja	:= $(FONTDIR)/fusion-pixel-12px-proportional-ja.bdf
 FONT_BDF_zh	:= $(FONTDIR)/fusion-pixel-12px-proportional-zh_hans.bdf
 TEXT_OTHER	:= $(filter-out ja,$(TEXT_LANGS))
 TEXT_ASSETS	:= $(foreach l,$(TEXT_LANGS),$(GENDIR)/text_$(l).bin) \
-		   $(GENDIR)/font_ja.bin $(if $(TEXT_OTHER),$(GENDIR)/font_zh.bin)
+		   $(if $(filter ja,$(TEXT_LANGS)),$(GENDIR)/font_ja.bin) $(if $(TEXT_OTHER),$(GENDIR)/font_zh.bin)
 GEN_ASSETS	+= $(TEXT_ASSETS)
 
-$(GENDIR)/text_ja.bin: $(TEXT_BASE) $(TOOLS)/mktext.py
+$(GENDIR)/text_$(TEXT_BASE_LANG).bin: $(TEXT_BASE) $(TOOLS)/mktext.py
 	@echo "  MKTEXT  $@"
 	$(V)$(PYTHON) $(TOOLS)/mktext.py $< $@
 
