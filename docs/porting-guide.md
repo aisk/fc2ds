@@ -114,7 +114,7 @@ Goal: the port runs with no 6502 code at all, exactly as it will on the NDS.
 1. Port what is left of the fixed bank: interrupt handlers and the IRQ split handlers, the reset code (`Reset`), and the main loop (`GameMain`).
    - The main loop calls `portWaitNmi()` where the original waits for the NMI, and `portTickEnd()` where a tick ends.
    - If the original leaves something in a register that the next pass reads, keep it in a variable. For example, a variable that keeps X of the idle loop.
-2. Replace every `call6502` and `call_regs` outside the `NESREF` blocks with direct calls.
+2. Replace every `call6502` and `call_regs` outside the `NESREF` blocks with direct calls. Or keep them: compiled with `PORT_REGS` (in the game's `DEFINES`), the port calls routines through their `PORT_HOOK` wrappers on the NDS too (`common/nds/src/porthooks.c`), the same dispatch `--native` uses on the host. This suits code where registers and flags cross routine boundaries everywhere, since the wrappers `make verify` checked become the calling convention.
 3. Switch `VERIFY_MODE` to `--native`. The game's `GameMain` now drives the port machine: interrupts call the C handlers, and any 6502 instruction the port would still run is an error. `--pcs FILE` lists such instructions while you get there.
 4. `port/` must compile for the NDS without warnings (`make`).
 
