@@ -264,9 +264,14 @@ static void run_tick(void)
     for (int i = 0; i < poke_count; i++)
         if (pokes[i].tick == cur->tick)
             vnes->ram[pokes[i].addr] = pokes[i].value;
-    do
+    long steps = 0;
+    do {
         step();
-    while (c->pc != tick_pc);
+        // A tick normally takes well under 100k steps; this catches a port
+        // that waits for something only the original would change.
+        if (++steps > 5000000)
+            fail("tick does not end (hang?)");
+    } while (c->pc != tick_pc);
     cur->tick++;
 }
 
