@@ -184,11 +184,16 @@ $(VERIFY_BIN): $(PORT_SOURCES) $(wildcard port/*.h) $(HOSTDIR)/ram.h $(wildcard 
 	$(V)$(HOST_CC) -O2 -g -Wall -Wextra -DNESREF -Iport -I$(HOSTDIR) -I$(NESREF) -I$(VNES) -o $@ \
 		$(NESREF)/nesref.c $(NESREF)/cpu6502.c $(VNES)/vnes.c $(PORT_SOURCES)
 
+# --native runs the port as it runs on the NDS (no 6502 at all); with
+# VERIFY_MODE=--compare the port machine runs the original code with the
+# ported routines hooked in, for games that are only partly ported.
+VERIFY_MODE ?= --native
+
 verify: $(VERIFY_BIN) $(ROM_FILE) $(VERIFY_DEPS)
 	$(V)rm -f $(HOSTDIR)/coverage.txt
 	$(V)for f in verify/*.txt $(VERIFY_GEN_SCRIPTS); do \
 		echo "  VERIFY  $$f"; \
-		$(VERIFY_BIN) $(ROM_FILE) --tick-pc $(TICK_PC) --compare --speed 32 --input $$f \
+		$(VERIFY_BIN) $(ROM_FILE) --tick-pc $(TICK_PC) $(VERIFY_MODE) --speed 32 --input $$f \
 			--coverage $(HOSTDIR)/coverage.txt $(VERIFY_FLAGS) || exit 1; \
 	done
 	$(V)awk '{ n[$$1] += $$2 } END { for (k in n) { t++; if (!n[k]) { u++; printf "  not reached: %s\n", k } } \
