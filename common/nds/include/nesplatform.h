@@ -1,5 +1,6 @@
 // Runs a ported NES game on the NDS: the virtual NES in common/vnes keeps
-// the original frame timing (scanline counter for MMC3 IRQs, vblank NMI),
+// the original frame timing (scanline counter for MMC3 IRQs, sprite 0 hit,
+// vblank NMI),
 // the game's C main loop calls portWaitNmi() where the original waits for
 // vblank, every finished frame is shown with ndsvideo and the APU writes
 // are played through common/vnes/vapu.
@@ -10,6 +11,8 @@
 typedef struct {
     const uint8_t *prg, *chr;
     int prg_size, chr_size;
+    uint8_t mapper;    // VNES_MMC3 (default) or VNES_NROM
+    uint8_t mirroring; // NROM: 0 vertical, 1 horizontal (iNES header)
     void (*nmi)(void); // the game's NMI handler
     void (*irq)(void); // the game's IRQ handler (acknowledges the MMC3 IRQ)
     void (*main)(void); // the game's reset + main loop (never returns)

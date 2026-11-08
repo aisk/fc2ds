@@ -45,6 +45,9 @@ void nesPlatformRun(const NesPlatform *p)
 {
     platform = *p;
     vnesInit(&nes, p->prg, p->prg_size, p->chr, p->chr_size);
+    nes.mapper = p->mapper;
+    if (p->mapper == VNES_NROM)
+        nes.mirroring = p->mirroring;
     vnes = &nes;
     ndsVideoInit(p->chr, p->chr_size);
     sound_init();

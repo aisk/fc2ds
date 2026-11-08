@@ -9,7 +9,8 @@ Each phase lists what it produces and when it is done. The game's `README.md` ke
 - Toolchain: `docs/setup.md` (BlocksDS in WSL, cc65, Python 3 with Pillow and PyYAML). Build in a login shell (`bash -lc make`) so the BlocksDS variables are set.
 - ROMs live in `roms/` and are never committed, nor is anything generated from them (disassembly listings, dumped text, extracted graphics). Only hand-written knowledge is committed: layouts, names, notes, ported code, translations.
 - What the shared layer supports today (extend it first if the game needs more):
-  - Mappers: MMC3 only, in `common/vnes` (the virtual NES) and `common/tools/nesref` (the reference runner). NROM, UxROM, CNROM, MMC1 are small additions there.
+  - Mappers: MMC3 and NROM, in `common/vnes` (the virtual NES) and `common/tools/nesref` (the reference runner). UxROM, CNROM, MMC1 are small additions there.
+  - The sprite 0 hit is modelled (from the OAM and the scroll at the start of the frame), so a status bar split that polls PPUSTATUS works.
   - CHR ROM only (no CHR RAM yet).
   - The disassembly tracer models PRG as one fixed segment plus pages that switch in one window.
   - NTSC timing; no DPCM in the synthesizer.
@@ -68,6 +69,7 @@ Goal: `make verify` runs the original on the host and compares it with the port 
    - `VERIFY_FLAGS`:
      - `--ignore 180-1FF` leaves the stack out of the comparison.
      - `--idle PC:ADDR` tells the runner where the main loop waits for the NMI, so it can skip ahead.
+     - Games that run everything in the NMI and idle in an empty loop: `TICK_PC` is that loop and `--tick-nmi` ends a tick there only after an NMI; `--idle PC` (no address) skips ahead in the loop.
 2. Write input scripts in `verify/*.txt`:
    - `TICK BUTTONS` lines, with buttons from `ABsSUDLR` or `-`.
    - `TICK poke ADDR VALUE` jumps straight to a stage or a state.
@@ -76,6 +78,7 @@ Goal: `make verify` runs the original on the host and compares it with the port 
 3. Start porting with something small and central, such as the NMI handler or the bank switch, and register it with `PORT_HOOK`. `make verify` runs in `VERIFY_MODE=--compare` until phase 6: the port machine runs the original code with the ported routines hooked in.
 
 Pitfalls seen so far:
+- **Busy waits**: ported code takes no NES time, so a loop polling PPUSTATUS (sprite 0 hit) must call `vnesWaitStatus(mask, value)` to let the lines pass.
 - **Speed**: ported routines take no CPU time while the original does, so the original lags in heavy scenes and the two drift apart. Verify runs with `--speed 32`, which makes the reference CPU fast enough never to lag.
 - **Input**: comparison and input are per tick, not per video frame, for the same reason.
 

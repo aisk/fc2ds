@@ -18,7 +18,7 @@ import nesrom
 ROOT = Path(__file__).resolve().parents[2]
 TEMPLATE = ROOT / "common" / "template"
 # Mappers the shared NES layer (common/vnes, nesref) can run today.
-SUPPORTED = {4: "MMC3"}
+SUPPORTED = {0: "NROM", 4: "MMC3"}
 
 
 def layout_guess(rom: nesrom.NesRom) -> str:

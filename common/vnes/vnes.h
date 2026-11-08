@@ -1,5 +1,5 @@
-// Virtual NES system state without a CPU: RAM, MMC3, PPU memory and
-// registers, joypad. Ported game code reads and writes the NES through this,
+// Virtual NES system state without a CPU: RAM, mapper (MMC3 or NROM), PPU
+// memory and registers, joypad. Ported game code reads and writes the NES through this,
 // so it runs unchanged on the host reference runner (common/tools/nesref) and
 // on the NDS, where a renderer turns the PPU state into NDS graphics.
 //
@@ -26,13 +26,18 @@ typedef struct {
 
 #define VNES_RASTER_EVENTS 512
 
+// Mappers. MMC3 is 0 so that a zeroed Vnes or NesPlatform means MMC3.
+enum { VNES_MMC3 = 0, VNES_NROM = 1 };
+
 typedef struct Vnes {
     const uint8_t *prg, *chr;
     int prg_size, chr_size;
     uint8_t ram[0x800];
     uint8_t prg_ram[0x2000];
+    uint8_t mapper;   // VNES_MMC3 or VNES_NROM (set after vnesInit)
 
-    // MMC3
+    // MMC3 (mirroring: 0 vertical, 1 horizontal; NROM uses it too, from the
+    // iNES header)
     uint8_t bank_select, regs[8], mirroring;
     uint8_t irq_latch, irq_counter, irq_reload, irq_enabled, irq_pending;
 
@@ -62,6 +67,8 @@ typedef struct Vnes {
     long dots, dots_per_line, frame;
     int line;
     int dma_cycles;
+    int sprite0_line; // line where the sprite 0 hit flag gets set, -1 none
+
 } Vnes;
 
 // The instance that vnesRead/vnesWrite and nes_ram act on.
@@ -91,6 +98,11 @@ void vnesAddCycles(int cycles);
 // once one is) or a line ends with the current line at stop_line (returns
 // 1). The same as stepping line by line with vnesAddCycles, in one call.
 int vnesRunUntil(int stop_line);
+
+// Let lines pass until PPUSTATUS & mask == value, as a CPU polling $2002
+// would see it (for example the sprite 0 hit, mask $40). Gives up after a
+// frame's worth of lines (returns 0) when the flag never comes.
+int vnesWaitStatus(uint8_t mask, uint8_t value);
 
 // Provided by the platform that runs the ported game (the host runner or the
 // NDS main loop), called by ported code:

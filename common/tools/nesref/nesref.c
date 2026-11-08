@@ -1,4 +1,4 @@
-// Headless reference runner for MMC3 NES games.
+// Headless reference runner for MMC3 and NROM NES games.
 //
 // Runs the original ROM with scripted input and stops at a given PC once per
 // main loop pass ("tick"). There is no picture or sound: common/vnes keeps
@@ -30,7 +30,10 @@
 //                    palette 32, OAM 256, MMC3 R0-R7)
 //   --idle PC:ADDR   the main loop waits at PC while RAM[ADDR] is 0; jump
 //                    straight to the next interrupt there (only speeds up
-//                    large --speed values)
+//                    large --speed values); --idle PC: always idle at PC
+//   --tick-nmi       a tick ends at the tick PC only after an NMI was taken
+//                    in it: for games that run everything in the NMI and
+//                    idle in an empty loop (the tick PC is that loop)
 //   --coverage FILE  append "name original-calls hook-calls" for every hook:
 //                    how often the original routine was reached on the ref
 //                    machine, and how often the C version ran through its
@@ -81,12 +84,14 @@ typedef struct {
     Cpu cpu;
     long tick;
     int hooks; // run port_hooks
+    int nmi_seen; // an NMI was taken during the current tick
 } Machine;
 
 static Machine machines[2];
 static Machine *cur;
 static long tick_pc = -1;
 static long idle_pc = -1, idle_addr;
+static int tick_nmi;
 static int trace;
 static int native;
 static long *port_pcs; // per (bank, PC): 6502 instructions run on the port machine
@@ -223,6 +228,7 @@ static void step(void)
     if (vnes->nmi) {
         vnes->nmi = 0;
         c->nmi = 1;
+        cur->nmi_seen = 1;
     }
     c->irq = vnes->irq_pending;
 
@@ -248,7 +254,7 @@ static void step(void)
     }
 
     // Waiting for NMI: skip whole scanlines until an interrupt is due.
-    if (c->pc == idle_pc && !vnes->ram[idle_addr] && !c->nmi && !c->irq) {
+    if (c->pc == idle_pc && (idle_addr < 0 || !vnes->ram[idle_addr]) && !c->nmi && !c->irq) {
         while (!vnes->nmi && !vnes->irq_pending)
             vnesAddCycles((int)((vnes->dots_per_line - vnes->dots + 2) / 3));
         return;
@@ -410,7 +416,8 @@ static void run_tick(void)
         // that waits for something only the original would change.
         if (++steps > 5000000)
             fail("tick does not end (hang?)");
-    } while (c->pc != tick_pc);
+    } while (c->pc != tick_pc || (tick_nmi && !cur->nmi_seen));
+    cur->nmi_seen = 0;
     cur->tick++;
 }
 
@@ -675,9 +682,11 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--idle") && i + 1 < argc) {
             char *end;
             idle_pc = strtol(argv[++i], &end, 16);
-            idle_addr = *end == ':' ? strtol(end + 1, NULL, 16) & 0x7FF : 0;
+            idle_addr = *end == ':' && end[1] ? strtol(end + 1, NULL, 16) & 0x7FF : -1;
         } else if (!strcmp(argv[i], "--coverage") && i + 1 < argc)
             coverage = argv[++i];
+        else if (!strcmp(argv[i], "--tick-nmi"))
+            tick_nmi = 1;
         else if (!strcmp(argv[i], "--compare"))
             compare = 1;
         else if (!strcmp(argv[i], "--native"))
@@ -725,8 +734,8 @@ int main(int argc, char **argv)
         return 1;
     }
     int mapper = (header[6] >> 4) | (header[7] & 0xF0);
-    if (mapper != 4) {
-        fprintf(stderr, "nesref: mapper %d, only MMC3 (4) is supported\n", mapper);
+    if (mapper != 4 && mapper != 0) {
+        fprintf(stderr, "nesref: mapper %d, only MMC3 (4) and NROM (0) are supported\n", mapper);
         return 1;
     }
     if (header[6] & 4)
@@ -766,6 +775,10 @@ int main(int argc, char **argv)
         Machine *m = &machines[i];
         use_machine(m);
         vnesInit(&m->nes, prg, prg_size, chr, chr_size);
+        if (mapper == 0) {
+            m->nes.mapper = VNES_NROM;
+            m->nes.mirroring = header[6] & 1 ? 0 : 1; // iNES bit 0: vertical
+        }
         m->nes.dots_per_line = 341L * speed;
         m->cpu = (Cpu){ .read = bus_read, .write = bus_write };
         cpuReset(&m->cpu);

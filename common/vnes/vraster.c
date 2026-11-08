@@ -45,6 +45,11 @@ static void apply(VnesRaster *r, const VnesRasterEvent *e)
 // the 2 KiB and 1 KiB halves).
 static void chr_banks(const VnesRaster *r, uint8_t chr[8])
 {
+    if (vnes->mapper == VNES_NROM) {
+        for (int i = 0; i < 8; i++)
+            chr[i] = i;
+        return;
+    }
     uint8_t lo[4] = { r->regs[0] & 0xFE, r->regs[0] | 1, r->regs[1] & 0xFE, r->regs[1] | 1 };
     uint8_t hi[4] = { r->regs[2], r->regs[3], r->regs[4], r->regs[5] };
     int inv = r->bank_select & 0x80;

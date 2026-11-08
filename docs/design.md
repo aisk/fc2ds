@@ -64,7 +64,7 @@ common/nds: ndsframe (frame -> NDS screen state) -> ndsvideo (hardware)
 
 Everything below is game independent and meant to be reused by every port:
 
-- `common/vnes/vnes.[ch]`: the virtual NES. MMC3 only so far (other mappers go here when a game needs them). Besides the state, it keeps a snapshot of the raster registers at the start of each frame and logs every access to them during the visible lines (`$2000/$2001/$2005/$2006`, `$2002` reads, MMC3 bank select/data and mirroring).
+- `common/vnes/vnes.[ch]`: the virtual NES. MMC3 and NROM so far (other mappers go here when a game needs them), and the sprite 0 hit. Besides the state, it keeps a snapshot of the raster registers at the start of each frame and logs every access to them during the visible lines (`$2000/$2001/$2005/$2006`, `$2002` reads, MMC3 bank select/data and mirroring).
 - `common/vnes/vraster.[ch]`: replays that log into 240 `VrasterLine`s: scroll position in the 512x512 nametable plane, PPUCTRL/PPUMASK, CHR banks and mirroring of each line. Mid-frame splits (status bars, parallax, wave effects, CHR switches) come out of this without per-game code.
 - `common/vnes/vrender.[ch]`: host software renderer of a frame (screenshots, `nesref --shot`).
 - `common/vnes/vapu.[ch]`: software 2A03: pulse, triangle and noise with envelopes, sweep, length/linear counters, the frame counter and the NES mixer curves (no DPCM yet). `Vnes.apu_write` feeds it the register writes as they happen. `nesref --wav FILE` writes the reference machine's sound for listening on the host.

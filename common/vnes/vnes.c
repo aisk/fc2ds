@@ -32,11 +32,14 @@ void vnesInit(Vnes *n, const uint8_t *prg, int prg_size, const uint8_t *chr, int
     n->chr = chr;
     n->chr_size = chr_size;
     n->dots_per_line = 341;
+    n->sprite0_line = -1;
 }
 
-// MMC3 PRG mode 0 or 1 (bit 6 of bank select).
+// MMC3 PRG mode 0 or 1 (bit 6 of bank select); NROM maps 16 or 32 KiB.
 int vnesPrgBank(int slot)
 {
+    if (vnes->mapper == VNES_NROM)
+        return slot % (vnes->prg_size / 0x2000);
     int last = vnes->prg_size / 0x2000 - 1;
     int swap = vnes->bank_select & 0x40;
     switch (slot) {
@@ -49,6 +52,8 @@ int vnesPrgBank(int slot)
 
 int vnesChrOffset(uint16_t a)
 {
+    if (vnes->mapper == VNES_NROM)
+        return a % vnes->chr_size;
     int inv = (vnes->bank_select & 0x80) ? 0x1000 : 0;
     a ^= inv;
     int bank;
@@ -223,6 +228,8 @@ void vnesWrite(uint16_t a, uint8_t v)
         vnes->prg_ram[a & 0x1FFF] = v;
         return;
     }
+    if (vnes->mapper != VNES_MMC3)
+        return; // NROM: ROM, no registers
     if ((a & 0xE001) <= 0xA000)
         raster_event(a & 0xE001, v);
     switch (a & 0xE001) {
@@ -249,23 +256,80 @@ static void mmc3_clock(void)
         vnes->irq_pending = 1;
 }
 
+// Colour index (0-3) of a pattern pixel.
+static int pattern_pixel(uint16_t base, int tile, int row, int col)
+{
+    uint16_t a = base + tile * 16 + row;
+    return (vnesPpuRead(a) >> (7 - col) & 1) | (vnesPpuRead(a + 8) >> (7 - col) & 1) << 1;
+}
+
+// First line where an opaque pixel of sprite 0 meets an opaque background
+// pixel, from the OAM and the scroll (t, fine X) at the start of the frame.
+// Mid-frame changes are not followed: games put sprite 0 at the top of the
+// screen, in the part that is drawn with the frame's starting scroll.
+static int sprite0_hit_line(void)
+{
+    uint8_t mask = vnes->mask, ctrl = vnes->ctrl;
+    if ((mask & 0x18) != 0x18)
+        return -1;
+    int sy = vnes->oam[0] + 1, tile = vnes->oam[1], attr = vnes->oam[2], sx = vnes->oam[3];
+    int tall = ctrl & 0x20, h = tall ? 16 : 8;
+    uint16_t t = vnes->t;
+    int scroll_x = (t & 0x1F) * 8 + vnes->x + (t & 0x400 ? 256 : 0);
+    int scroll_y = ((t >> 5) & 0x1F) * 8 + ((t >> 12) & 7) + (t & 0x800 ? 240 : 0);
+    for (int r = 0; r < h; r++) {
+        int y = sy + r;
+        if (y >= 240)
+            break;
+        int pr = attr & 0x80 ? h - 1 - r : r;
+        uint16_t sbase;
+        int stile;
+        if (tall) {
+            sbase = tile & 1 ? 0x1000 : 0;
+            stile = (tile & 0xFE) + (pr >= 8);
+        } else {
+            sbase = ctrl & 0x08 ? 0x1000 : 0;
+            stile = tile;
+        }
+        for (int c = 0; c < 8; c++) {
+            int x = sx + c;
+            if (x >= 255 || (x < 8 && (mask & 0x06) != 0x06))
+                continue;
+            if (!pattern_pixel(sbase, stile, pr & 7, attr & 0x40 ? 7 - c : c))
+                continue;
+            int wx = (scroll_x + x) % 512, wy = (scroll_y + y) % 480;
+            uint16_t nt = 0x2000 + (wy >= 240 ? 0x800 : 0) + (wx >= 256 ? 0x400 : 0);
+            int bx = wx & 255, by = wy % 240;
+            int btile = vnesPpuRead(nt + (by >> 3) * 32 + (bx >> 3));
+            if (pattern_pixel(ctrl & 0x10 ? 0x1000 : 0, btile, by & 7, bx & 7))
+                return y;
+        }
+    }
+    return -1;
+}
+
 static inline void add_cycles(int cycles)
 {
     vnes->dots += (long)(cycles + vnes->dma_cycles) * 3;
     vnes->dma_cycles = 0;
     while (vnes->dots >= vnes->dots_per_line) {
         vnes->dots -= vnes->dots_per_line;
-        if ((vnes->mask & 0x18) && (vnes->line < 240 || vnes->line == 261))
+        if ((vnes->mask & 0x18) && (vnes->line < 240 || vnes->line == 261) && vnes->mapper == VNES_MMC3)
             mmc3_clock();
         vnes->line++;
-        if (vnes->line == 241) {
+        if (vnes->line == vnes->sprite0_line) {
+            vnes->status |= 0x40;
+        } else if (vnes->line == 241) {
             vnes->status |= 0x80;
             if (vnes->ctrl & 0x80)
                 vnes->nmi = 1;
         } else if (vnes->line == 261) {
-            // Pre-render line: what the next frame starts from.
+            // Pre-render line: what the next frame starts from. The
+            // sprite 0 hit and overflow flags are cleared here.
             vnesRasterSave(&vnes->raster_start);
             vnes->raster_count = 0;
+            vnes->status &= 0x9F;
+            vnes->sprite0_line = sprite0_hit_line();
         } else if (vnes->line == 262) {
             vnes->line = 0;
             vnes->status &= 0x1F;
@@ -288,4 +352,14 @@ VNES_HOT int vnesRunUntil(int stop_line)
         if (vnes->line == stop_line)
             return 1;
     }
+}
+
+int vnesWaitStatus(uint8_t mask, uint8_t value)
+{
+    for (int i = 0; i < 262; i++) {
+        if ((vnes->status & mask) == value)
+            return 1;
+        add_cycles((int)((vnes->dots_per_line - vnes->dots + 2) / 3));
+    }
+    return (vnes->status & mask) == value;
 }
