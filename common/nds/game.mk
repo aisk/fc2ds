@@ -157,11 +157,14 @@ $(OBJDIR)/common/%.s.o: $(COMMON_NDS)/src/%.s
 # Verification
 # ------------
 # `make verify` builds the reference runner (common/tools/nesref) on the host
-# with the ported code in port/ hooked in, and runs every input script in
+# with the ported code in port/ hooked in (PORT_HOOK blocks under NESREF in
+# each port file), and runs every input script in
 # verify/: the original and the port run side by side and their RAM must
-# match after every tick. The game Makefile sets TICK_PC (where a tick ends),
+# match after every tick. Routines that no script reaches are listed, since
+# they are not verified yet. The game Makefile sets TICK_PC (where a tick ends),
 # RAM_NAMES (Markdown files naming RAM, for port/ram.h) and VERIFY_FLAGS
-# (e.g. --ignore for the stack).
+# (e.g. --ignore for the stack), and optionally VERIFY_DEPS / VERIFY_GEN_SCRIPTS
+# for generated input scripts.
 
 HOST_CC		?= gcc
 NESREF		:= $(TOOLS)/nesref
@@ -178,14 +181,18 @@ $(HOSTDIR)/ram.h: $(RAM_NAMES) $(TOOLS)/mkramh.py $(TOOLS)/trace6502.py
 
 $(VERIFY_BIN): $(PORT_SOURCES) $(wildcard port/*.h) $(HOSTDIR)/ram.h $(wildcard $(NESREF)/*.[ch]) $(wildcard $(VNES)/*.[ch])
 	@echo "  HOSTCC  $@"
-	$(V)$(HOST_CC) -O2 -g -Wall -Wextra -Iport -I$(HOSTDIR) -I$(NESREF) -I$(VNES) -o $@ \
+	$(V)$(HOST_CC) -O2 -g -Wall -Wextra -DNESREF -Iport -I$(HOSTDIR) -I$(NESREF) -I$(VNES) -o $@ \
 		$(NESREF)/nesref.c $(NESREF)/cpu6502.c $(VNES)/vnes.c $(PORT_SOURCES)
 
-verify: $(VERIFY_BIN) $(ROM_FILE)
-	$(V)for f in verify/*.txt; do \
+verify: $(VERIFY_BIN) $(ROM_FILE) $(VERIFY_DEPS)
+	$(V)rm -f $(HOSTDIR)/coverage.txt
+	$(V)for f in verify/*.txt $(VERIFY_GEN_SCRIPTS); do \
 		echo "  VERIFY  $$f"; \
-		$(VERIFY_BIN) $(ROM_FILE) --tick-pc $(TICK_PC) --compare --speed 8 --input $$f $(VERIFY_FLAGS) || exit 1; \
+		$(VERIFY_BIN) $(ROM_FILE) --tick-pc $(TICK_PC) --compare --speed 8 --input $$f \
+			--coverage $(HOSTDIR)/coverage.txt $(VERIFY_FLAGS) || exit 1; \
 	done
+	$(V)awk '{ n[$$1] += $$2 } END { for (k in n) { t++; if (!n[k]) { u++; printf "  never called: %s\n", k } } \
+		printf "  %d ported routines, %d checked by the scripts\n", t, t - u }' $(HOSTDIR)/coverage.txt
 
 # Disassembly
 # -----------

@@ -16,7 +16,9 @@
 //   --ticks N        stop after N ticks (default 600)
 //   --input FILE     input script, one "TICK BUTTONS" per line: from that
 //                    tick on the pad holds BUTTONS (letters ABsSUDLR or "-");
-//                    "TICK end" stops there unless --ticks is given
+//                    "TICK end" stops there unless --ticks is given;
+//                    "TICK poke ADDR VALUE" (hex) writes RAM on both
+//                    machines before that tick, e.g. to jump to a stage
 //   --speed N        run the CPU N times faster than real hardware, so the
 //                    original never lags (default 1; use 8 or more with
 //                    --compare since hooks take no CPU time)
@@ -25,6 +27,10 @@
 //   --out FILE       binary RAM dump: per tick u32 tick, u32 frame, RAM[0x800]
 //   --ppu FILE       write the PPU memory at the end (nametables 4K,
 //                    palette 32, OAM 256, MMC3 R0-R7)
+//   --idle PC:ADDR   the main loop waits at PC while RAM[ADDR] is 0; jump
+//                    straight to the next interrupt there (only speeds up
+//                    large --speed values)
+//   --coverage FILE  append "name calls" for every hook to FILE
 //   --trace          print every instruction (slow)
 //
 // The pad is applied per tick, not per frame, so lag frames in the original
@@ -37,8 +43,11 @@
 
 #include "vnes.h"
 
-// The game's hook table; absent when nesref is built on its own.
-static const PortHook *hooks;
+// Hooks registered with PORT_HOOK; the section is empty (and the symbols
+// null) when nesref is built on its own.
+extern const PortHook *const __start_port_hooks[] __attribute__((weak));
+extern const PortHook *const __stop_port_hooks[] __attribute__((weak));
+static const PortHook *const *hooks;
 static int hook_count;
 
 typedef struct {
@@ -52,6 +61,7 @@ typedef struct {
 static Machine machines[2];
 static Machine *cur;
 static long tick_pc = -1;
+static long idle_pc = -1, idle_addr;
 static int trace;
 static long *hook_calls;
 
@@ -82,6 +92,15 @@ typedef struct {
 static InputEvent *events;
 static int event_count;
 static long input_end = -1;
+
+typedef struct {
+    long tick;
+    uint16_t addr;
+    uint8_t value;
+} Poke;
+
+static Poke *pokes;
+static int poke_count;
 
 static uint8_t parse_buttons(const char *s)
 {
@@ -114,6 +133,16 @@ static void load_input(const char *path)
             continue;
         if (!strcmp(buttons, "end")) {
             input_end = tick;
+            continue;
+        }
+        unsigned addr, value;
+        if (!strcmp(buttons, "poke")) {
+            if (sscanf(line, "%*d %*s %x %x", &addr, &value) != 2 || addr >= 0x800) {
+                fprintf(stderr, "nesref: %s: bad poke: %s", path, line);
+                exit(1);
+            }
+            pokes = realloc(pokes, (poke_count + 1) * sizeof *pokes);
+            pokes[poke_count++] = (Poke){ tick, addr, value };
             continue;
         }
         events = realloc(events, (event_count + 1) * sizeof *events);
@@ -157,11 +186,20 @@ static void step(void)
 
     if (cur->hooks && !c->nmi && !(c->irq && !(c->p & FLAG_I))) {
         for (int i = 0; i < hook_count; i++) {
-            const PortHook *h = &hooks[i];
+            const PortHook *h = hooks[i];
             if (h->addr == c->pc && (h->bank < 0 || h->bank == bank_of(c->pc))) {
                 hook_calls[i]++;
                 h->fn(c);
-                // Return to the caller.
+                // Return to the caller (RTI also restores the flags).
+                if (h->rti) {
+                    c->s++;
+                    c->p = (vnesRead(0x100 | c->s) & ~FLAG_B) | FLAG_U;
+                    c->s++;
+                    c->pc = vnesRead(0x100 | c->s);
+                    c->s++;
+                    c->pc |= vnesRead(0x100 | c->s) << 8;
+                    return;
+                }
                 c->s++;
                 c->pc = vnesRead(0x100 | c->s);
                 c->s++;
@@ -170,6 +208,13 @@ static void step(void)
                 return;
             }
         }
+    }
+
+    // Waiting for NMI: skip whole scanlines until an interrupt is due.
+    if (c->pc == idle_pc && !vnes->ram[idle_addr] && !c->nmi && !c->irq) {
+        while (!vnes->nmi && !vnes->irq_pending)
+            vnesAddCycles((int)((vnes->dots_per_line - vnes->dots + 2) / 3));
+        return;
     }
 
     if (trace)
@@ -203,6 +248,9 @@ static void run_tick(void)
 {
     Cpu *c = &cur->cpu;
     vnes->pad = pad_for_tick(cur->tick);
+    for (int i = 0; i < poke_count; i++)
+        if (pokes[i].tick == cur->tick)
+            vnes->ram[pokes[i].addr] = pokes[i].value;
     do
         step();
     while (c->pc != tick_pc);
@@ -215,7 +263,7 @@ typedef struct {
 
 int main(int argc, char **argv)
 {
-    const char *rom = NULL, *out = NULL, *input = NULL, *ppu_out = NULL;
+    const char *rom = NULL, *out = NULL, *input = NULL, *ppu_out = NULL, *coverage = NULL;
     long max_ticks = -1;
     int speed = 1, compare = 0;
     Range ignore[16];
@@ -233,6 +281,12 @@ int main(int argc, char **argv)
             out = argv[++i];
         else if (!strcmp(argv[i], "--ppu") && i + 1 < argc)
             ppu_out = argv[++i];
+        else if (!strcmp(argv[i], "--idle") && i + 1 < argc) {
+            char *end;
+            idle_pc = strtol(argv[++i], &end, 16);
+            idle_addr = *end == ':' ? strtol(end + 1, NULL, 16) & 0x7FF : 0;
+        } else if (!strcmp(argv[i], "--coverage") && i + 1 < argc)
+            coverage = argv[++i];
         else if (!strcmp(argv[i], "--compare"))
             compare = 1;
         else if (!strcmp(argv[i], "--ignore") && i + 1 < argc && ignore_count < 16) {
@@ -283,9 +337,9 @@ int main(int argc, char **argv)
         load_input(input);
     if (max_ticks < 0)
         max_ticks = input_end >= 0 ? input_end : 600;
-    if (&port_hook_count) {
-        hooks = port_hooks;
-        hook_count = port_hook_count;
+    if (__start_port_hooks) {
+        hooks = __start_port_hooks;
+        hook_count = __stop_port_hooks - __start_port_hooks;
     }
     hook_calls = calloc(hook_count + 1, sizeof *hook_calls);
 
@@ -381,9 +435,13 @@ int main(int argc, char **argv)
         fclose(p);
     }
     fprintf(stderr, "nesref: %ld ticks, %ld frames\n", machines[0].tick, machines[0].nes.frame);
-    if (compare) {
+    if (coverage) {
+        FILE *cov = fopen(coverage, "a");
         for (int i = 0; i < hook_count; i++)
-            fprintf(stderr, "  %-24s %ld calls\n", hooks[i].name, hook_calls[i]);
+            fprintf(cov, "%s %ld\n", hooks[i]->name, hook_calls[i]);
+        fclose(cov);
+    }
+    if (compare) {
         if (!status)
             fprintf(stderr, "nesref: RAM and PPU state match on every tick\n");
     }
