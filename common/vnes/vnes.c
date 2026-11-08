@@ -4,6 +4,18 @@
 
 Vnes *vnes;
 
+// Log a raster register access during the visible lines.
+static void raster_event(uint16_t addr, uint8_t value)
+{
+    if (vnes->line >= 240 || vnes->raster_count >= VNES_RASTER_EVENTS)
+        return;
+    VnesRasterEvent *e = &vnes->raster[vnes->raster_count++];
+    e->line = vnes->line;
+    e->addr = addr;
+    e->value = value;
+}
+
+
 void vnesInit(Vnes *n, const uint8_t *prg, int prg_size, const uint8_t *chr, int chr_size)
 {
     memset(n, 0, sizeof *n);
@@ -85,6 +97,7 @@ uint8_t vnesRead(uint16_t a)
             uint8_t s = vnes->status;
             vnes->status &= 0x7F;
             vnes->w = 0;
+            raster_event(0x2002, 0);
             return s;
         }
         case 4:
@@ -118,6 +131,20 @@ uint8_t vnesRead(uint16_t a)
     return vnes->prg[(vnesPrgBank(slot) * 0x2000 + (a & 0x1FFF)) % vnes->prg_size];
 }
 
+void vnesRasterSave(VnesRaster *r)
+{
+    r->t = vnes->t;
+    r->v = vnes->v;
+    r->x = vnes->x;
+    r->w = vnes->w;
+    r->ctrl = vnes->ctrl;
+    r->mask = vnes->mask;
+    r->bank_select = vnes->bank_select;
+    for (int i = 0; i < 8; i++)
+        r->regs[i] = vnes->regs[i];
+    r->mirroring = vnes->mirroring;
+}
+
 void vnesWrite(uint16_t a, uint8_t v)
 {
     if (a < 0x2000) {
@@ -125,6 +152,8 @@ void vnesWrite(uint16_t a, uint8_t v)
         return;
     }
     if (a < 0x4000) {
+        if ((a & 7) <= 1 || (a & 7) == 5 || (a & 7) == 6)
+            raster_event(0x2000 | (a & 7), v);
         switch (a & 7) {
         case 0:
             // NMI enabled during vblank fires at once.
@@ -137,9 +166,10 @@ void vnesWrite(uint16_t a, uint8_t v)
         case 3: vnes->oam_addr = v; break;
         case 4: vnes->oam[vnes->oam_addr++] = v; break;
         case 5:
-            if (!vnes->w)
+            if (!vnes->w) {
                 vnes->t = (vnes->t & 0xFFE0) | v >> 3;
-            else
+                vnes->x = v & 7;
+            } else
                 vnes->t = (vnes->t & 0x8C1F) | (v & 7) << 12 | (v & 0xF8) << 2;
             vnes->w ^= 1;
             break;
@@ -183,6 +213,8 @@ void vnesWrite(uint16_t a, uint8_t v)
         vnes->prg_ram[a & 0x1FFF] = v;
         return;
     }
+    if ((a & 0xE001) <= 0xA000)
+        raster_event(a & 0xE001, v);
     switch (a & 0xE001) {
     case 0x8000: vnes->bank_select = v; break;
     case 0x8001: vnes->regs[vnes->bank_select & 7] = v; break;
@@ -220,6 +252,10 @@ void vnesAddCycles(int cycles)
             vnes->status |= 0x80;
             if (vnes->ctrl & 0x80)
                 vnes->nmi = 1;
+        } else if (vnes->line == 261) {
+            // Pre-render line: what the next frame starts from.
+            vnesRasterSave(&vnes->raster_start);
+            vnes->raster_count = 0;
         } else if (vnes->line == 262) {
             vnes->line = 0;
             vnes->status &= 0x1F;

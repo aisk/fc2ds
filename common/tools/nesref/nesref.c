@@ -41,6 +41,9 @@
 //                    call6502 only dispatches to hooks. It calls portTickEnd()
 //                    at the end of each tick and portWaitNmi() to wait for
 //                    vblank. Implies --compare.
+//   --shot TICK:PREFIX  after that tick write PREFIX-ref.ppm (and
+//                    PREFIX-port.ppm with --compare / --native): the last
+//                    frame drawn by common/vnes/vrender (repeatable)
 //   --pcs FILE       append "PC bank count" for every 6502 instruction the
 //                    port machine still runs (what is left to port)
 //   --trace          print every instruction (slow)
@@ -54,6 +57,7 @@
 #include <string.h>
 
 #include "vnes.h"
+#include "vrender.h"
 
 // Hooks registered with PORT_HOOK; the section is empty (and the symbols
 // null) when nesref is built on its own.
@@ -378,9 +382,56 @@ static int compare;
 // The game's reset and main loop in C (--native); see portTickEnd.
 void GameMain(void) __attribute__((weak));
 
+typedef struct {
+    long tick;
+    const char *prefix;
+} Shot;
+
+static Shot shots[64];
+static int shot_count;
+
+static void write_ppm(const char *path)
+{
+    static VrasterFrame frame;
+    static uint8_t pix[240][256];
+    vrasterBuild(&frame);
+    vrenderFrame(&frame, pix);
+    FILE *f = fopen(path, "wb");
+    if (!f) {
+        perror(path);
+        return;
+    }
+    fprintf(f, "P6\n256 240\n255\n");
+    for (int y = 0; y < 240; y++)
+        for (int x = 0; x < 256; x++) {
+            uint32_t c = vrenderRgb(pix[y][x]);
+            uint8_t rgb[3] = { c >> 16, c >> 8, c };
+            fwrite(rgb, 1, 3, f);
+        }
+    fclose(f);
+}
+
+// Screenshots requested for this tick.
+static void take_shots(long tick)
+{
+    Machine *keep = cur;
+    for (int i = 0; i < shot_count; i++) {
+        if (shots[i].tick != tick)
+            continue;
+        for (int m = 0; m < (compare ? 2 : 1); m++) {
+            char path[512];
+            snprintf(path, sizeof path, "%s-%s.ppm", shots[i].prefix, machines[m].name);
+            use_machine(&machines[m]);
+            write_ppm(path);
+        }
+    }
+    use_machine(keep);
+}
+
 // Compare the machines after a tick; returns 1 on a difference.
 static int compare_tick(long tick)
 {
+    take_shots(tick);
     Machine *ref = &machines[0];
     if (dump) {
         uint32_t hdr[2] = { (uint32_t)tick, (uint32_t)ref->nes.frame };
@@ -531,6 +582,10 @@ int main(int argc, char **argv)
             ignore[ignore_count].lo = strtol(argv[++i], &end, 16);
             ignore[ignore_count].hi = *end == '-' ? strtol(end + 1, NULL, 16) : ignore[ignore_count].lo;
             ignore_count++;
+        } else if (!strcmp(argv[i], "--shot") && i + 1 < argc && shot_count < 64) {
+            char *end;
+            shots[shot_count].tick = strtol(argv[++i], &end, 10);
+            shots[shot_count++].prefix = *end == ':' ? end + 1 : "shot";
         } else if (!strcmp(argv[i], "--pcs") && i + 1 < argc)
             pcs_out = argv[++i];
         else if (!strcmp(argv[i], "--trace"))
