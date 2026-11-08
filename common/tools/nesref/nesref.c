@@ -30,7 +30,10 @@
 //   --idle PC:ADDR   the main loop waits at PC while RAM[ADDR] is 0; jump
 //                    straight to the next interrupt there (only speeds up
 //                    large --speed values)
-//   --coverage FILE  append "name calls" for every hook to FILE
+//   --coverage FILE  append "name original-calls hook-calls" for every hook:
+//                    how often the original routine was reached on the ref
+//                    machine, and how often the C version ran through its
+//                    hook on the port machine
 //   --trace          print every instruction (slow)
 //
 // The pad is applied per tick, not per frame, so lag frames in the original
@@ -63,7 +66,26 @@ static Machine *cur;
 static long tick_pc = -1;
 static long idle_pc = -1, idle_addr;
 static int trace;
-static long *hook_calls;
+static long *hook_calls;   // C runs on the port machine
+static long *orig_calls;   // the original routine reached on the ref machine
+static int16_t *hook_first; // per address: first hook index + 1, 0 = none
+static int16_t *hook_next;  // next hook at the same address (other banks)
+
+static int bank_of(uint16_t addr)
+{
+    return addr >= 0x8000 ? vnesPrgBank((addr - 0x8000) >> 13) : -1;
+}
+
+// The hook for the routine at the PC, or -1.
+static int find_hook(uint16_t pc)
+{
+    for (int i = hook_first[pc] - 1; i >= 0; i = hook_next[i] - 1) {
+        const PortHook *h = hooks[i];
+        if (h->bank < 0 || h->bank == bank_of(pc))
+            return i;
+    }
+    return -1;
+}
 
 static uint8_t bus_read(void *ctx, uint16_t a)
 {
@@ -161,10 +183,6 @@ static uint8_t pad_for_tick(long tick)
     return pad;
 }
 
-static int bank_of(uint16_t addr)
-{
-    return addr >= 0x8000 ? vnesPrgBank((addr - 0x8000) >> 13) : -1;
-}
 
 static void fail(const char *what)
 {
@@ -184,30 +202,25 @@ static void step(void)
     }
     c->irq = vnes->irq_pending;
 
-    if (cur->hooks && !c->nmi && !(c->irq && !(c->p & FLAG_I))) {
-        for (int i = 0; i < hook_count; i++) {
-            const PortHook *h = hooks[i];
-            if (h->addr == c->pc && (h->bank < 0 || h->bank == bank_of(c->pc))) {
-                hook_calls[i]++;
-                h->fn(c);
-                // Return to the caller (RTI also restores the flags).
-                if (h->rti) {
-                    c->s++;
-                    c->p = (vnesRead(0x100 | c->s) & ~FLAG_B) | FLAG_U;
-                    c->s++;
-                    c->pc = vnesRead(0x100 | c->s);
-                    c->s++;
-                    c->pc |= vnesRead(0x100 | c->s) << 8;
-                    return;
-                }
-                c->s++;
-                c->pc = vnesRead(0x100 | c->s);
-                c->s++;
-                c->pc |= vnesRead(0x100 | c->s) << 8;
-                c->pc++;
-                return;
-            }
+    int hi = hook_first[c->pc] && !c->nmi && !(c->irq && !(c->p & FLAG_I)) ? find_hook(c->pc) : -1;
+    if (hi >= 0 && !cur->hooks)
+        orig_calls[hi]++;
+    if (hi >= 0 && cur->hooks) {
+        const PortHook *h = hooks[hi];
+        hook_calls[hi]++;
+        h->fn(c);
+        // Return to the caller (RTI also restores the flags).
+        if (h->rti) {
+            c->s++;
+            c->p = (vnesRead(0x100 | c->s) & ~FLAG_B) | FLAG_U;
         }
+        c->s++;
+        c->pc = vnesRead(0x100 | c->s);
+        c->s++;
+        c->pc |= vnesRead(0x100 | c->s) << 8;
+        if (!h->rti)
+            c->pc++;
+        return;
     }
 
     // Waiting for NMI: skip whole scanlines until an interrupt is due.
@@ -342,6 +355,13 @@ int main(int argc, char **argv)
         hook_count = __stop_port_hooks - __start_port_hooks;
     }
     hook_calls = calloc(hook_count + 1, sizeof *hook_calls);
+    orig_calls = calloc(hook_count + 1, sizeof *orig_calls);
+    hook_first = calloc(0x10000, sizeof *hook_first);
+    hook_next = calloc(hook_count + 1, sizeof *hook_next);
+    for (int i = 0; i < hook_count; i++) {
+        hook_next[i] = hook_first[hooks[i]->addr];
+        hook_first[hooks[i]->addr] = i + 1;
+    }
 
     int count = compare ? 2 : 1;
     machines[0].name = "ref";
@@ -438,7 +458,7 @@ int main(int argc, char **argv)
     if (coverage) {
         FILE *cov = fopen(coverage, "a");
         for (int i = 0; i < hook_count; i++)
-            fprintf(cov, "%s %ld\n", hooks[i]->name, hook_calls[i]);
+            fprintf(cov, "%s %ld %ld\n", hooks[i]->name, orig_calls[i], hook_calls[i]);
         fclose(cov);
     }
     if (compare) {

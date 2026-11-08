@@ -160,8 +160,8 @@ $(OBJDIR)/common/%.s.o: $(COMMON_NDS)/src/%.s
 # with the ported code in port/ hooked in (PORT_HOOK blocks under NESREF in
 # each port file), and runs every input script in
 # verify/: the original and the port run side by side and their RAM must
-# match after every tick. Routines that no script reaches are listed, since
-# they are not verified yet. The game Makefile sets TICK_PC (where a tick ends),
+# match after every tick. Ported routines whose original code no script
+# reaches are listed, since they are not verified yet. The game Makefile sets TICK_PC (where a tick ends),
 # RAM_NAMES (Markdown files naming RAM, for port/ram.h) and VERIFY_FLAGS
 # (e.g. --ignore for the stack), and optionally VERIFY_DEPS / VERIFY_GEN_SCRIPTS
 # for generated input scripts.
@@ -191,8 +191,8 @@ verify: $(VERIFY_BIN) $(ROM_FILE) $(VERIFY_DEPS)
 		$(VERIFY_BIN) $(ROM_FILE) --tick-pc $(TICK_PC) --compare --speed 8 --input $$f \
 			--coverage $(HOSTDIR)/coverage.txt $(VERIFY_FLAGS) || exit 1; \
 	done
-	$(V)awk '{ n[$$1] += $$2 } END { for (k in n) { t++; if (!n[k]) { u++; printf "  never called: %s\n", k } } \
-		printf "  %d ported routines, %d checked by the scripts\n", t, t - u }' $(HOSTDIR)/coverage.txt
+	$(V)awk '{ n[$$1] += $$2 } END { for (k in n) { t++; if (!n[k]) { u++; printf "  not reached: %s\n", k } } \
+		printf "  %d ported routines, %d reached by the scripts\n", t, t - u }' $(HOSTDIR)/coverage.txt
 
 # Disassembly
 # -----------
