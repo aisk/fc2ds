@@ -1,0 +1,50 @@
+---
+name: nes-port
+description: Port a NES game in this repository to a native NDS game, or continue a port in progress. Use when the user drops a ROM in, names a game to port, or asks to continue, check the status of, or take the next step of a port (games/<name>).
+---
+
+# NES to NDS port
+
+The process is `docs/porting-guide.md`. Read it first, then `docs/design.md` (the why), and for a game in progress its `games/<name>/README.md`. The README's status checklist says which phase it is in, and its "Next steps" section says what is next.
+
+## 1. Find the game and the phase
+
+- **New ROM** (a path given, or an unknown `.nes` in `roms/`):
+  1. Run `python3 common/tools/rominfo.py ROM`.
+  2. Pick a short lowercase name and confirm it and the title with the user.
+  3. Run `python3 common/tools/newgame.py ROM NAME --title "..."`.
+  4. Check the warnings it prints. An unsupported mapper or CHR RAM means extending `common/vnes` and `common/tools/nesref` before phase 4. Say so early, and start phases 1-3 anyway.
+- **Existing game**: read its README checklist and "Next steps". Continue with the first phase that is not done.
+- If several games exist and the user did not name one, ask which.
+
+## 2. Work the phase
+
+Follow the phase in `docs/porting-guide.md`. Use `games/<name>` as the worked example for every file type:
+- `disasm/layout.toml`
+- `ram.md`, `notes/*.md`, `fixes.md`
+- `verify/*.txt`, `verify/mkstages.py`
+- `port/*.c`, `port/port.h`, `port/screen.c`, `port/main.c`
+- `src/game.c`
+
+Rules that hold in every phase:
+
+- Build and verify in a login shell: `bash -lc 'make'`, `bash -lc 'make verify'`.
+- From phase 4 on, `make verify` must pass after every change to `port/` and `common/`. The port matches the original tick by tick, and only the NDS side may differ.
+- Never commit ROMs or anything generated from them (listings, dumped text, extracted data). `build/` is ignored.
+- Commit at the end of each step, when the user has asked for commits. Follow the existing history: a gitmoji subject in English, no body. Code and comments are in English.
+- Update the README checklist and "Next steps" in the same commit as the work, so the next session can pick it up.
+- Things only the user can judge (melonDS checks, listening, translation choices) go to `games/<name>/REVIEW.md`, which is not committed (see `.git/info/exclude`). Keep working instead of waiting for them.
+- Odd original behaviour goes to `fixes.md` and is not fixed until phase 10.
+
+## 3. Large phases
+
+Phase 5 (porting the code) is most of the work. Split it by PRG page or address range into port files:
+1. Port the shared helpers first, yourself.
+2. Then give independent ranges to agents running in separate worktrees (`isolation: "worktree"`). Each agent owns its files and writes verify scripts for the code it ports.
+3. Merge them one at a time, run `make verify` after each merge, and resolve duplicate helpers.
+
+The coverage list printed by `make verify` shows what is still unchecked.
+
+## 4. Checking the NDS build
+
+From phase 7 on, use the `nds-check` skill (headless DeSmuME: screenshots, shake detection, CPU load). Then ask the user to confirm on melonDS.

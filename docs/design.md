@@ -89,14 +89,13 @@ Note: RAM names from `ram.h` are macros; include the vnes/ndsframe headers befor
 
 ## 5. Workflow per game
 
-1. **Identify**: `rominfo.py`, mapper, bank layout.
-2. **Dump graphics**: `chrdump.py`, then palettes and nametable captures from an emulator.
-3. **Disassemble**: auto-split PRG banks, disassemble with da65 (cc65), then annotate in Mesen's debugger (labels exported back to the repo).
-4. **Map RAM**: zero page and $0300-$07FF variables, documented in `games/<name>/ram.md`.
-5. **Decode data formats**: levels, metatiles, enemy tables, text and its encoding table. Write extractors in `common/tools` or `games/<name>/tools`.
-6. **Port logic**: routine by routine into C. Keep the original address in a comment (`/* $C3A0 */`) for traceability.
-7. **Verify**: `make verify` builds `common/tools/nesref` on the host, a headless 6502 + MMC3 runner on top of `common/vnes`. It runs two machines in lockstep with the input scripts in `games/<name>/verify/`: one runs the original code, the other the port. While a game is being ported (`VERIFY_MODE=--compare`), the port machine runs the original code with every ported routine hooked in (`PORT_HOOK` in each port file), so a routine can be checked as soon as it is ported. Once everything is ported, `--native` runs the port exactly as on the NDS: its C main loop drives the machine, interrupts call the C handlers, and no 6502 code runs. After every tick, RAM, PPU memory, PPU/MMC3 registers and APU writes must match. Compare per tick (one pass of the main loop), not per video frame: input is applied per tick, and the CPU runs faster than real hardware so the original does not lag. Mesen is still useful for exploring the original, but not needed for verification.
-8. **Improve**: HUD on the bottom screen, translations, bug fixes (`fixes.md`).
+The step-by-step process (project from a ROM, disassembly, RAM map, data and viewer, verification harness, porting, native, NDS, sound, translation, enhancements) is `docs/porting-guide.md`. In short:
+
+1. `common/tools/newgame.py` creates `games/<name>` from `common/template`.
+2. `make disasm` traces the code (`common/tools/trace6502.py`, `disasm/layout.toml`) into da65 listings that must reassemble to the ROM.
+3. RAM names (`ram.md`, `notes/*.md`) feed both the listings and the port (`build/host/ram.h`).
+4. **Verify**: `make verify` builds `common/tools/nesref` on the host, a headless 6502 + MMC3 runner on top of `common/vnes`, and runs two machines in lockstep with the input scripts in `games/<name>/verify/`: one runs the original code, the other the port. While a game is being ported (`VERIFY_MODE=--compare`), the port machine runs the original code with every ported routine hooked in (`PORT_HOOK` in each port file), so a routine can be checked as soon as it is ported. Once everything is ported, `--native` runs the port exactly as on the NDS: its C main loop drives the machine, interrupts call the C handlers, and no 6502 code runs. After every tick, RAM, PPU memory, PPU/MMC3 registers and APU writes must match. Compare per tick (one pass of the main loop), not per video frame: input is applied per tick, and the CPU runs faster than real hardware so the original does not lag.
+5. The NDS build is checked on the host (`nesref --shot`), headless in DeSmuME (`common/tools/dscheck.py`) and finally by the user on melonDS.
 
 ## 6. Toolchain
 
@@ -106,7 +105,8 @@ Note: RAM names from `ram.h` are macros; include the vnes/ndsframe headers befor
 | Asset pipeline | Python 3 + Pillow | Windows or WSL |
 | Disassembler | cc65 `da65` (with info files per bank) | WSL: `apt install cc65` |
 | Debugging the original | Mesen 2 (debugger, trace logger, Lua scripting, memory diff) | Windows |
-| Testing the port | melonDS (accurate, has a GDB stub), DeSmuME | Windows |
+| Testing the port | melonDS (accurate, has a GDB stub) | Windows |
+| Headless checks | DeSmuME through py-desmume (`common/tools/dscheck.py`) | WSL, see `docs/setup.md` |
 | Optional | Ghidra + 6502 support for cross-reference browsing | Windows |
 
 Builds run inside WSL (Debian) with BlocksDS (devkitPro's servers are not reachable from this network). Install script: see `docs/setup.md`.

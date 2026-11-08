@@ -1,0 +1,34 @@
+# Disassembly layout for @TITLE@, consumed by common/tools/trace6502.py
+# (see games/<name>/disasm/layout.toml for a complete example).
+#
+# The tracer models PRG as one fixed segment plus switchable pages that share
+# one CPU window. The values below are a first guess from the mapper
+# (@MAPPER@); check them against the bank switch code in phase 1.
+
+# Markdown files whose tables name RAM ($XXXX rows) and routines (seg:XXXX rows).
+names_from = ["../ram.md"]
+
+# Extra entry points the tracer cannot find: { seg, addr, ctx (page mapped) }
+entry = []
+
+# Code pointer tables not reached through a dispatcher: { seg, addr, count, ctx }
+table = []
+
+[rom]
+sha1 = "@SHA1@"
+
+[layout]
+@LAYOUT@
+bank_switch = 0x0000  # TODO: routine that maps a page (A = page number)
+dispatchers = []      # TODO: "jsr Dispatch / .word ..." style jump table routines
+
+# Indirect jumps whose targets are covered by the tables above: "seg:ADDR" = "why"
+[indirect]
+
+# Override inline jump table lengths: "seg:ADDR" = entries
+[table_len]
+
+[labels.fixed]
+# Names that do not fit ram.md go here.
+
+[ram]

@@ -46,13 +46,23 @@ bash -lc 'arm-none-eabi-gcc --version; cat $BLOCKSDS/version.txt'
 
 `make verify` also needs a host C compiler (`gcc`) and Python 3 with PyYAML.
 
-## 4. Notes
+## 4. Headless NDS checks (optional)
+
+`common/tools/dscheck.py` runs a build in DeSmuME without a window (screenshots, scripted input, CPU load). It needs py-desmume, which installs without root through [uv](https://docs.astral.sh/uv/):
+
+```sh
+uv venv --python 3.12 ~/.local/share/fc2ds/dsenv
+uv pip install --python ~/.local/share/fc2ds/dsenv/bin/python py-desmume pillow
+~/.local/share/fc2ds/dsenv/bin/python common/tools/dscheck.py --help
+```
+
+## 5. Notes
 
 - The project lives inside WSL (Debian testing). Automatic mounting of Windows drives is off on purpose, so do not rely on `/mnt/c`. Windows tools reach the files through `\\wsl.localhost\Debian\home\<user>\fc2ds\...`.
 - devkitPro's package servers return HTTP 403 from this network; do not try to install it.
 - Passwordless sudo is not guaranteed; ask the user to run commands that need root.
 
-## 5. Windows-side tools
+## 6. Windows-side tools
 
 - Mesen 2: debugging the original game
 - melonDS: running and debugging the NDS build
