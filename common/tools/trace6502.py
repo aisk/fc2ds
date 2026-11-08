@@ -585,11 +585,15 @@ def names_from_markdown(path: Path) -> tuple[dict, dict]:
         comment = cells[2] if len(cells) > 2 else ""
         if m.group(2):
             comment = f"{m.group(2).strip()} {comment}"
-        first = re.sub(r",\s*[xy]$", "", cells[0])
+        # "$0658,x (8-31)": an object array indexed by slot (32 slots).
+        indexed = re.match(r"(\$[0-9A-Fa-f]{2,4}),\s*[xy]\b(?:\s*\((\d+)-(\d+)\))?", cells[0])
+        first = indexed.group(1) if indexed else cells[0]
         m = re.fullmatch(r"\$([0-9A-Fa-f]{2,4})(?:\s*-\s*\$?([0-9A-Fa-f]{2,4}))?", first)
         if m:
             a = int(m.group(1), 16)
             b = int(m.group(2), 16) if m.group(2) else a
+            if indexed:
+                b = a + (int(indexed.group(3)) if indexed.group(3) else 31)
             if a in ram and ram[a][0] != name:
                 conflicts.append(f"{path.name}: ${a:04X} {name} vs {ram[a][0]}")
                 continue
