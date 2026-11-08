@@ -58,14 +58,19 @@ with an LLM coding agent such as Claude Code, which the repository is set up
 for: `CLAUDE.md` and the skills in `.claude/skills/` guide it through the
 process.
 
-```sh
-python3 common/tools/newgame.py path/to/game.nes <name> --title "Game Title"
-cd games/<name> && bash -lc make
-```
+To start:
 
-Then follow `docs/porting-guide.md`. In Claude Code, ask it to port the game:
-the `nes-port` skill walks through the phases and `nds-check` runs the NDS
-build headless. Setup: `docs/setup.md`.
+1. Set up the toolchain (`docs/setup.md`).
+2. Put your ROM into `roms/`.
+3. Open Claude Code in the repository root (or another coding agent that
+   supports skills; they are in `.claude/skills/`) and run `/nes-port`.
+4. Confirm that you own a legal copy of the game and that the port is only
+   for your own learning. The agent then creates `games/<name>` and works
+   through the phases of `docs/porting-guide.md`, checking every step with
+   `make verify`. Run `/nes-port` again later to continue.
+
+By hand, `python3 common/tools/newgame.py roms/game.nes <name>` creates the
+game, and `docs/porting-guide.md` describes each phase.
 
 ## Games and copyright
 

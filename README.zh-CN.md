@@ -31,12 +31,14 @@ NDS 每块屏幕横向 256 像素，和 FC 一样，纵向 192 行，比 FC 在�
 
 这个项目不能一键逆向。仓库里的工具负责追踪反汇编、逐帧验证和运行，但读懂汇编、翻译成 C 这些工作，需要人工完成，或者配合 Claude Code 这类 LLM 编程助手来完成。仓库已经为此做好了准备：`CLAUDE.md` 和 `.claude/skills/` 里的 skill 会引导它走完整个流程。
 
-```sh
-python3 common/tools/newgame.py path/to/game.nes <name> --title "Game Title"
-cd games/<name> && bash -lc make
-```
+开始的方法：
 
-接下来照着 `docs/porting-guide.md` 做。在 Claude Code 里直接让它移植这个游戏即可，`nes-port` skill 会一步步带你走完各个阶段，`nds-check` 能在无界面的模拟器里跑 NDS 版本做检查。环境搭建见 `docs/setup.md`。
+1. 按 `docs/setup.md` 装好工具链。
+2. 把你的 ROM 放进 `roms/` 目录。
+3. 在仓库根目录打开 Claude Code（或者其他支持 skill 的编程助手，skill 在 `.claude/skills/` 里），输入 `/nes-port`。
+4. 确认你持有这个游戏的合法副本，并且移植只用于自己学习。之后它会创建 `games/<name>`，按 `docs/porting-guide.md` 的阶段一步步往下做，每一步都用 `make verify` 验证。以后再输入 `/nes-port` 就能接着做。
+
+想手工进行的话，用 `python3 common/tools/newgame.py roms/game.nes <name>` 创建游戏，各个阶段的做法见 `docs/porting-guide.md`。
 
 ## 游戏与版权
 

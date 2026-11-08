@@ -1,6 +1,6 @@
 ---
 name: nes-port
-description: Port a NES game in this repository to a native NDS game, or continue a port in progress. Use when the user drops a ROM in, names a game to port, or asks to continue, check the status of, or take the next step of a port (games/<name>).
+description: Port a NES game in this repository to a native NDS game, or continue a port in progress. Use when the user runs /nes-port, drops a ROM into roms/, names a game to port, or asks to continue, check the status of, or take the next step of a port (games/<name>).
 ---
 
 # NES to NDS port
@@ -9,13 +9,26 @@ The process is `docs/porting-guide.md`. Read it first, then `docs/design.md` (th
 
 ## 1. Find the game and the phase
 
-- **New ROM** (a path given, or an unknown `.nes` in `roms/`):
+Look for work: `.nes` files in `roms/` (or a path the user gave) and game directories in `games/`. A ROM whose name has no `games/<name>` yet is a new game.
+
+- **No ROM and no game**: tell the user to put their ROM into `roms/` and run `/nes-port` again. Stop there.
+- **New ROM**: first the confirmation below, then:
   1. Run `python3 common/tools/rominfo.py ROM`.
-  2. Pick a short lowercase name and confirm it and the title with the user.
-  3. Run `python3 common/tools/newgame.py ROM NAME --title "..."`.
-  4. Check the warnings it prints. An unsupported mapper or CHR RAM means extending `common/vnes` and `common/tools/nesref` before phase 4. Say so early, and start phases 1-3 anyway.
+  2. Pick a short lowercase name (a-z, 0-9, `_`) and the title yourself, from the file name and what you know of the game, and tell the user. Do not wait for approval.
+  3. Run `python3 common/tools/newgame.py ROM NAME --title "..."` (it copies the ROM to `roms/NAME.nes` and runs `git init` in `games/NAME`). For a freely licensed game the user wants in this repository, add `--here`.
+  4. Add the confirmation to `games/NAME/README.md`, under the title: "Ported from a legally owned copy, for personal learning only; not to be published (confirmed by the user on YYYY-MM-DD)."
+  5. Check the warnings newgame.py prints. An unsupported mapper or CHR RAM means extending `common/vnes` and `common/tools/nesref` before phase 4. Say so early, and start phases 1-3 anyway.
+  6. Go on with phase 1 without waiting.
 - **Existing game**: read its README checklist and "Next steps". Continue with the first phase that is not done.
 - If several games exist and the user did not name one, ask which.
+
+### Confirmation before a new ROM
+
+Before running anything on a new ROM (rominfo included), ask the user once, with the question tool if there is one:
+
+> To port `<file>`, please confirm: you own a legal copy of this game (dumped from your own cartridge, or a game whose license allows it, such as free homebrew), the port is only for your own learning, and you will not publish the port or anything derived from the ROM.
+
+Options: "I confirm" and "No". On anything but a clear confirmation, explain why it is needed and stop: do not read, copy or analyse the ROM. Ask once per new ROM; a game that already has `games/<name>` was confirmed before.
 
 ## 2. Work the phase
 
