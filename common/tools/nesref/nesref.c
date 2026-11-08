@@ -35,6 +35,8 @@
 //                    how often the original routine was reached on the ref
 //                    machine, and how often the C version ran through its
 //                    hook on the port machine
+//   --pcs FILE       append "PC bank count" for every 6502 instruction the
+//                    port machine still runs (what is left to port)
 //   --trace          print every instruction (slow)
 //
 // The pad is applied per tick, not per frame, so lag frames in the original
@@ -67,6 +69,7 @@ static Machine *cur;
 static long tick_pc = -1;
 static long idle_pc = -1, idle_addr;
 static int trace;
+static long *port_pcs; // per (bank, PC): 6502 instructions run on the port machine
 static long *hook_calls;   // C runs on the port machine
 static long *orig_calls;   // the original routine reached on the ref machine
 static int16_t *hook_first; // per address: first hook index + 1, 0 = none
@@ -234,6 +237,8 @@ static void step(void)
     if (trace)
         printf("%-4s %6ld %04X A=%02X X=%02X Y=%02X S=%02X P=%02X\n", cur->name, vnes->frame,
                c->pc, c->a, c->x, c->y, c->s, c->p);
+    if (port_pcs && cur->hooks)
+        port_pcs[(bank_of(c->pc) + 1) * 0x10000L + c->pc]++;
     int cyc = cpuStep(c);
     if (cyc < 0)
         fail("unknown opcode");
@@ -282,7 +287,7 @@ typedef struct {
 
 int main(int argc, char **argv)
 {
-    const char *rom = NULL, *out = NULL, *input = NULL, *ppu_out = NULL, *coverage = NULL;
+    const char *rom = NULL, *out = NULL, *input = NULL, *ppu_out = NULL, *coverage = NULL, *pcs_out = NULL;
     long max_ticks = -1;
     int speed = 1, compare = 0;
     Range ignore[16];
@@ -313,7 +318,9 @@ int main(int argc, char **argv)
             ignore[ignore_count].lo = strtol(argv[++i], &end, 16);
             ignore[ignore_count].hi = *end == '-' ? strtol(end + 1, NULL, 16) : ignore[ignore_count].lo;
             ignore_count++;
-        } else if (!strcmp(argv[i], "--trace"))
+        } else if (!strcmp(argv[i], "--pcs") && i + 1 < argc)
+            pcs_out = argv[++i];
+        else if (!strcmp(argv[i], "--trace"))
             trace = 1;
         else if (!rom)
             rom = argv[i];
@@ -368,6 +375,9 @@ int main(int argc, char **argv)
         hook_next[i] = hook_first[hooks[i]->addr];
         hook_first[hooks[i]->addr] = i + 1;
     }
+
+    if (pcs_out)
+        port_pcs = calloc(64 * 0x10000L, sizeof *port_pcs);
 
     int count = compare ? 2 : 1;
     machines[0].name = "ref";
@@ -468,6 +478,13 @@ int main(int argc, char **argv)
         for (int i = 0; i < hook_count; i++)
             fprintf(cov, "%s %ld %ld\n", hooks[i]->name, orig_calls[i], hook_calls[i]);
         fclose(cov);
+    }
+    if (port_pcs) {
+        FILE *pf = fopen(pcs_out, "a");
+        for (long i = 0; i < 64 * 0x10000L; i++)
+            if (port_pcs[i])
+                fprintf(pf, "%04lX %ld %ld\n", i & 0xFFFF, (i >> 16) - 1, port_pcs[i]);
+        fclose(pf);
     }
     if (compare) {
         if (!status)
