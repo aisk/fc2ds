@@ -59,8 +59,14 @@ def main() -> None:
     roms = ROOT / "roms"
     roms.mkdir(exist_ok=True)
     target = roms / f"{args.name}.nes"
-    if Path(args.rom).resolve() != target.resolve():
-        shutil.copyfile(args.rom, target)
+    src = Path(args.rom).resolve()
+    if src != target.resolve():
+        # A ROM the user put into roms/ is renamed, so it is not taken for
+        # another new game later; one from elsewhere is copied.
+        if src.parent == roms.resolve():
+            src.rename(target)
+        else:
+            shutil.copyfile(src, target)
 
     values = {
         "@NAME@": args.name,

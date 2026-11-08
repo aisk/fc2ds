@@ -6,3 +6,6 @@ __pycache__/
 
 # Copyrighted game data: never commit
 *.nes
+
+# Notes for the user to review, never committed
+REVIEW.md

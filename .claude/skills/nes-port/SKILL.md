@@ -15,7 +15,7 @@ Look for work: `.nes` files in `roms/` (or a path the user gave) and game direct
 - **New ROM**: first the confirmation below, then:
   1. Run `python3 common/tools/rominfo.py ROM`.
   2. Pick a short lowercase name (a-z, 0-9, `_`) and the title yourself, from the file name and what you know of the game, and tell the user. Do not wait for approval.
-  3. Run `python3 common/tools/newgame.py ROM NAME --title "..."` (it copies the ROM to `roms/NAME.nes` and runs `git init` in `games/NAME`). For a freely licensed game the user wants in this repository, add `--here`.
+  3. Run `python3 common/tools/newgame.py ROM NAME --title "..."` (it moves the ROM to `roms/NAME.nes`, or copies it from outside `roms/`, and runs `git init` in `games/NAME`). For a freely licensed game the user wants in this repository, add `--here`.
   4. Add the confirmation to `games/NAME/README.md`, under the title: "Ported from a legally owned copy, for personal learning only; not to be published (confirmed by the user on YYYY-MM-DD)."
   5. Check the warnings newgame.py prints. An unsupported mapper or CHR RAM means extending `common/vnes` and `common/tools/nesref` before phase 4. Say so early, and start phases 1-3 anyway.
   6. Go on with phase 1 without waiting.
@@ -49,7 +49,7 @@ Rules that hold in every phase:
 - Nothing from a game goes into this repository: no addresses, names or text of a commercial game in `common/` or `docs/`.
 - Commit at the end of each step, when the user has asked for commits. Follow the existing history: a gitmoji subject in English, no body. Code and comments are in English.
 - Update the README checklist and "Next steps" in the same commit as the work, so the next session can pick it up.
-- Things only the user can judge (melonDS checks, listening, translation choices) go to `games/<name>/REVIEW.md`, which is not committed (see `.git/info/exclude`). Keep working instead of waiting for them.
+- Things only the user can judge (melonDS checks, listening, translation choices) go to `games/<name>/REVIEW.md`, which is not committed (the game's `.gitignore`). Keep working instead of waiting for them.
 - Odd original behaviour goes to `fixes.md` and is not fixed until phase 10.
 
 ## 3. Large phases
