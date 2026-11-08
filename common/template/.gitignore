@@ -1,0 +1,8 @@
+# Build output
+build/
+*.nds
+*.elf
+__pycache__/
+
+# Copyrighted game data: never commit
+*.nes

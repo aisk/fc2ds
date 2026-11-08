@@ -151,7 +151,7 @@ clean:
 # Generated assets must exist before anything is compiled.
 $(OBJS): | $(GEN_ASSETS)
 
-$(OBJDIR)/game/%.c.o: src/%.c
+$(OBJDIR)/game/%.c.o: src/%.c $(if $(PORT_SOURCES),$(HOSTDIR)/ram.h)
 	@echo "  CC      $<"
 	@mkdir -p $(@D)
 	$(V)$(CC) $(CFLAGS) -MMD -MP -c -o $@ $<
