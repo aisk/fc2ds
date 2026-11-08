@@ -65,7 +65,7 @@ DEPS		:= $(OBJS:.o=.d)
 DEFINES		+= -D__NDS__ -D__BLOCKSDS__ -DARM9
 ARCH		:= -mthumb -mcpu=arm946e-s+nofp
 SPECS		:= $(BLOCKSDS)/sys/crts/ds_arm9.specs
-INCLUDES	:= -Isrc -I$(COMMON_NDS)/include -I$(GENDIR) -I$(VNES) -Iport -I$(HOSTDIR) \
+INCLUDES	:= -Isrc -I$(COMMON_NDS)/include -I$(GENDIR) -I$(VNES) -Iport -I$(HOSTDIR) -I$(TOOLS)/nesref \
 		   -I$(BLOCKSDS)/libs/libnds/include -I$(BLOCKSDS)/libs/maxmod/include
 
 CFLAGS		:= -Wall -Wextra -std=gnu17 -O2 -ffunction-sections -fdata-sections \
