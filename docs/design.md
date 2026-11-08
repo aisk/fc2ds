@@ -1,0 +1,92 @@
+# Design: NES game -> native NDS reimplementation
+
+## 1. Goals
+
+- Reimplement game logic in C, running natively on the ARM9 (no 6502 emulation at runtime).
+- An enhanced port, not a 1:1 copy. Game rules, physics and timing stay the same, but limits that come from the NES hardware are removed (see section 3).
+- Use the second screen for HUD / status / map so the top screen is pure play area.
+- Text in Simplified Chinese, Japanese and English, selectable at runtime.
+- Fix serious original bugs, each behind a compile-time switch.
+- Never ship or commit ROM data. Assets are extracted from the user's own ROM at build time.
+
+## 2. Screen mapping
+
+| | NES | NDS (per screen) |
+|---|---|---|
+| Resolution | 256x240 (about 224 visible on NTSC) | 256x192 |
+| BG | 1 layer, 8x8 tiles, 4 palettes x 3 colours | 4 layers, 256 colours or 16x16 palettes |
+| Sprites | 64, 8 per scanline | 128, no per-line limit |
+
+- Width is the same (256), so horizontal mapping is 1:1.
+- Height: remove the in-game status bar (usually 24-40 px), which then goes to the bottom screen. If the play area is still above 192 px, the camera follows the player vertically (dead zone + clamp). We do not scale, because scaling blurs pixel art.
+- No sprite flicker. The NES 8-sprites-per-line limit does not exist on NDS, so the OAM rotation that games use to spread the flicker is dropped.
+
+## 3. Hardware limits we remove
+
+The port keeps what the player experiences as game design, and drops what was only a workaround for the NES. These are not switchable, they are simply how the port works.
+
+- **Slowdown**: the original drops frames when the CPU cannot finish a game tick in one frame. The port always runs one tick per frame.
+- **Sprite flicker and dropout**: all sprites are drawn every frame, without OAM cycling.
+- **Object limits** that exist only to save CPU time or OAM slots can be raised, as long as gameplay does not change (e.g. a fixed spawn table still spawns the same enemies).
+- **Raster tricks** (MMC3 IRQ splits for status bars, mid-frame CHR switches) become separate NDS layers or the bottom screen.
+- **Missing visuals at screen edges** (attribute glitches from horizontal mirroring, the hidden left 8 px column) are drawn correctly.
+
+Colour is also open to enhancement, as long as it stays faithful to the original look:
+
+- **Palette**: NES colour indices ($00-$3F) map to RGB15 through one shared, well-calibrated table in `common/nds`, instead of whatever an emulator happens to use. Emphasis and greyscale bits ($2001) are applied properly.
+- **Fades**: the NES fades by stepping palette indices in a few coarse steps. The port can use NDS master brightness or blending for smooth fades and flashes.
+- **Attribute clash**: the NES picks a palette per 16x16 area and 3 colours per tile. NDS allows a palette per 8x8 tile and 15 colours per palette, so places where the original art had to compromise can be fixed by per-game overrides.
+- **Layered sprites**: games often stack two sprites to get more than 3 colours. The port can merge them into one 4bpp sprite, which also removes the flicker the stacking caused.
+
+Visual enhancements never change collision or timing. Larger art changes (redrawn tiles) are per-game assets and stay optional.
+
+Anything that changes gameplay itself (difficulty, damage, item behaviour) is not an enhancement but a bug fix, and goes through `FIX_xxx` (section 8).
+
+## 4. Architecture
+
+```
+game logic (C, ported per game)  ->  virtual NES PPU state (nametables, OAM, palettes, scroll)
+                                            |
+                common/nds renderer  ------>  NDS BG0/BG1 + OAM (top screen)
+                                            \->  HUD/map/menus (bottom screen, native NDS)
+```
+
+- Phase A: game logic writes into a virtual PPU (same model as the original code). The shared renderer converts it to NDS hardware every vblank. Porting stays mechanical and verifiable.
+- Phase B (optional, per game): replace parts with native NDS rendering (wider view, extra layers, bottom-screen UI).
+- CHR banks (MMC3 1K/2K switching) map to NDS VRAM tile slots. The full 128 KiB CHR fits in VRAM, so bank switching becomes a tile index offset.
+- Audio: port the game's sound driver data and play it through a 2A03 synth on ARM7 (square/triangle/noise/DPCM in PSG channels or a mixed stream).
+
+## 5. Workflow per game
+
+1. **Identify**: `rominfo.py`, mapper, bank layout.
+2. **Dump graphics**: `chrdump.py`, then palettes and nametable captures from an emulator.
+3. **Disassemble**: auto-split PRG banks, disassemble with da65 (cc65), then annotate in Mesen's debugger (labels exported back to the repo).
+4. **Map RAM**: zero page and $0300-$07FF variables, documented in `games/<name>/ram.md`.
+5. **Decode data formats**: levels, metatiles, enemy tables, text and its encoding table. Write extractors in `common/tools` or `games/<name>/tools`.
+6. **Port logic**: routine by routine into C. Keep the original address in a comment (`/* $C3A0 */`) for traceability.
+7. **Verify**: record input movies in Mesen, replay them in both the original and the port, and compare the RAM state per game tick (a diff tool in `common/tools`). This is how we catch porting errors. Compare per tick (one pass of the main loop), not per video frame, because the original lags and the port does not: on the original side, log RAM at the end of each main loop pass and skip lag frames, and feed the port the input that the original actually read on each tick.
+8. **Improve**: HUD on the bottom screen, translations, bug fixes (`fixes.md`).
+
+## 6. Toolchain
+
+| Purpose | Tool | Where |
+|---|---|---|
+| NDS build | BlocksDS (Wonderful toolchain GCC, libnds-compatible, grit, ndstool, mmutil) | WSL Debian: `/opt/wonderful`, SDK at `/opt/blocksds/core` |
+| Asset pipeline | Python 3 + Pillow | Windows or WSL |
+| Disassembler | cc65 `da65` (with info files per bank) | WSL: `apt install cc65` |
+| Debugging the original | Mesen 2 (debugger, trace logger, Lua scripting, memory diff) | Windows |
+| Testing the port | melonDS (accurate, has a GDB stub), DeSmuME | Windows |
+| Optional | Ghidra + 6502 support for cross-reference browsing | Windows |
+
+Builds run inside WSL (Debian) with BlocksDS (devkitPro's servers are not reachable from this network). Install script: see `docs/setup.md`.
+
+## 7. Localisation
+
+- Text lives in `games/<name>/text/{ja,en,zh}.yaml`. Keys are stable IDs, and the original text is extracted to `ja` first.
+- Font: a 12x12 or 8x16 bitmap font is generated from a TTF at build time, keeping only the glyphs actually used (CJK subset).
+- Text boxes are re-laid out for each language. If space is short, longer text can go on the bottom screen.
+
+## 8. Bug fixes
+
+- Every fix is a `#if FIX_<NAME>` block in the code and is listed in `games/<name>/fixes.md`.
+- Default build: all serious fixes on (softlocks, crashes, save/progress corruption). An "original" build turns them off, so the original behaviour can still be checked during verification.

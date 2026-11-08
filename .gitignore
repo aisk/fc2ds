@@ -1,0 +1,11 @@
+# Copyrighted game data: never commit
+roms/
+*.nes
+*.fds
+*.unf
+
+# Build output
+build/
+*.nds
+*.elf
+__pycache__/
