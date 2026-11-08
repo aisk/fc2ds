@@ -44,11 +44,19 @@ endif
 # Sources
 # -------
 
+# A game with ported code in port/ also gets common/vnes (the virtual NES
+# the port runs on) and port/ram.h, generated into $(HOSTDIR) (see below).
+VNES		:= $(FC2DS_ROOT)/common/vnes
+HOSTDIR		:= $(BUILDDIR)/host
 GAME_SOURCES	:= $(shell find src -name "*.c" -o -name "*.s")
 COMMON_SOURCES	:= $(shell find $(COMMON_NDS)/src -name "*.c" -o -name "*.s")
+PORT_SOURCES	:= $(wildcard port/*.c)
+VNES_SOURCES	:= $(if $(PORT_SOURCES),$(VNES)/vnes.c $(VNES)/vraster.c)
 
 OBJS		:= $(addprefix $(OBJDIR)/game/,$(addsuffix .o,$(GAME_SOURCES:src/%=%))) \
-		   $(addprefix $(OBJDIR)/common/,$(addsuffix .o,$(COMMON_SOURCES:$(COMMON_NDS)/src/%=%)))
+		   $(addprefix $(OBJDIR)/common/,$(addsuffix .o,$(COMMON_SOURCES:$(COMMON_NDS)/src/%=%))) \
+		   $(addprefix $(OBJDIR)/port/,$(addsuffix .o,$(PORT_SOURCES:port/%=%))) \
+		   $(addprefix $(OBJDIR)/vnes/,$(addsuffix .o,$(VNES_SOURCES:$(VNES)/%=%)))
 DEPS		:= $(OBJS:.o=.d)
 
 # Flags
@@ -57,7 +65,8 @@ DEPS		:= $(OBJS:.o=.d)
 DEFINES		+= -D__NDS__ -D__BLOCKSDS__ -DARM9
 ARCH		:= -mthumb -mcpu=arm946e-s+nofp
 SPECS		:= $(BLOCKSDS)/sys/crts/ds_arm9.specs
-INCLUDES	:= -Isrc -I$(COMMON_NDS)/include -I$(GENDIR) -I$(BLOCKSDS)/libs/libnds/include
+INCLUDES	:= -Isrc -I$(COMMON_NDS)/include -I$(GENDIR) -I$(VNES) -Iport -I$(HOSTDIR) \
+		   -I$(BLOCKSDS)/libs/libnds/include
 
 CFLAGS		:= -Wall -Wextra -std=gnu17 -O2 -ffunction-sections -fdata-sections \
 		   $(ARCH) $(INCLUDES) $(DEFINES) -specs=$(SPECS) $(CFLAGS)
@@ -144,6 +153,16 @@ $(OBJDIR)/game/%.s.o: src/%.s
 	@mkdir -p $(@D)
 	$(V)$(CC) $(ASFLAGS) -MMD -MP -c -o $@ $<
 
+$(OBJDIR)/port/%.c.o: port/%.c $(HOSTDIR)/ram.h
+	@echo "  CC      $<"
+	@mkdir -p $(@D)
+	$(V)$(CC) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(OBJDIR)/vnes/%.c.o: $(VNES)/%.c
+	@echo "  CC      common/vnes/$*.c"
+	@mkdir -p $(@D)
+	$(V)$(CC) $(CFLAGS) -MMD -MP -c -o $@ $<
+
 $(OBJDIR)/common/%.c.o: $(COMMON_NDS)/src/%.c
 	@echo "  CC      common/nds/src/$*.c"
 	@mkdir -p $(@D)
@@ -168,10 +187,7 @@ $(OBJDIR)/common/%.s.o: $(COMMON_NDS)/src/%.s
 
 HOST_CC		?= gcc
 NESREF		:= $(TOOLS)/nesref
-VNES		:= $(FC2DS_ROOT)/common/vnes
-HOSTDIR		:= $(BUILDDIR)/host
 VERIFY_BIN	:= $(HOSTDIR)/verify
-PORT_SOURCES	:= $(wildcard port/*.c)
 
 .PHONY: verify
 
