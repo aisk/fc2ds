@@ -57,3 +57,11 @@ int vnesChrOffset(uint16_t addr);           // byte offset in CHR for a pattern 
 
 // Host runner: advance PPU timing by CPU cycles (sets nmi, irq_pending).
 void vnesAddCycles(int cycles);
+
+// Provided by the platform that runs the ported game (the host runner or the
+// NDS main loop), called by ported code:
+// - portWaitNmi: where the original waits for something only the NMI changes
+//   (vblank): handle the rest of the frame (IRQ splits) and the NMI.
+// - portTickEnd: where the original main loop reaches the end of a tick.
+void portWaitNmi(void);
+void portTickEnd(void);

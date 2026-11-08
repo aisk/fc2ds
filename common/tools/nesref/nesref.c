@@ -35,6 +35,12 @@
 //                    how often the original routine was reached on the ref
 //                    machine, and how often the C version ran through its
 //                    hook on the port machine
+//   --native         the port machine runs no 6502 code: the game's GameMain()
+//                    (reset and main loop in C) drives it, interrupts call
+//                    the hooks at the NMI / IRQ vectors directly, and
+//                    call6502 only dispatches to hooks. It calls portTickEnd()
+//                    at the end of each tick and portWaitNmi() to wait for
+//                    vblank. Implies --compare.
 //   --pcs FILE       append "PC bank count" for every 6502 instruction the
 //                    port machine still runs (what is left to port)
 //   --trace          print every instruction (slow)
@@ -69,6 +75,7 @@ static Machine *cur;
 static long tick_pc = -1;
 static long idle_pc = -1, idle_addr;
 static int trace;
+static int native;
 static long *port_pcs; // per (bank, PC): 6502 instructions run on the port machine
 static long *hook_calls;   // C runs on the port machine
 static long *orig_calls;   // the original routine reached on the ref machine
@@ -250,9 +257,38 @@ Cpu *portCpu(void)
     return &cur->cpu;
 }
 
+// Run a hook directly, as if the CPU had called it with JSR: the wrapper
+// may pop the return address of its caller (c->s += 2), which a C caller
+// cannot follow, so that is an error.
+static void run_hook_direct(int hi, uint16_t addr)
+{
+    Cpu *c = &cur->cpu;
+    const PortHook *h = hooks[hi];
+    uint8_t s = c->s;
+    vnesWrite(0x100 | c->s--, 0xFF);
+    vnesWrite(0x100 | c->s--, 0xFF);
+    hook_calls[hi]++;
+    c->pc = addr;
+    h->fn(c);
+    if (c->s != (uint8_t)(s - 2)) {
+        c->pc = addr;
+        fail("hook returned past its C caller");
+    }
+    c->s = s;
+}
+
 void call6502(uint16_t addr)
 {
     Cpu *c = &cur->cpu;
+    if (native) {
+        int hi = hook_first[addr] ? find_hook(addr) : -1;
+        if (hi < 0) {
+            c->pc = addr;
+            fail("call6502 to a routine with no hook (--native)");
+        }
+        run_hook_direct(hi, addr);
+        return;
+    }
     uint8_t s = c->s;
     // Return address $FFFF + 1 = $0000, which the game never executes.
     vnesWrite(0x100 | c->s--, 0xFF);
@@ -260,6 +296,53 @@ void call6502(uint16_t addr)
     c->pc = addr;
     while (!(c->pc == 0x0000 && c->s == s))
         step();
+}
+
+// Take one pending interrupt on the port machine.
+static void take_interrupt(int is_nmi)
+{
+    Cpu *c = &cur->cpu;
+    if (native) {
+        uint16_t vec = is_nmi ? 0xFFFA : 0xFFFE;
+        uint16_t addr = vnesRead(vec) | vnesRead(vec + 1) << 8;
+        if (is_nmi)
+            vnes->nmi = 0;
+        int hi = find_hook(addr);
+        if (hi < 0) {
+            c->pc = addr;
+            fail("interrupt handler has no hook (--native)");
+        }
+        hook_calls[hi]++;
+        hooks[hi]->fn(c);
+        return;
+    }
+    // Park the CPU at $0000 (never executed): the interrupt pushes it and
+    // the handler's RTI comes back to it.
+    uint16_t pc = c->pc;
+    uint8_t s = c->s;
+    c->pc = 0x0000;
+    do
+        step();
+    while (!(c->pc == 0x0000 && c->s == s));
+    c->pc = pc;
+}
+
+// Called by ported code where the original waits for something only the
+// NMI changes: let time pass until the next NMI has been handled, taking
+// the IRQs that come first.
+void portWaitNmi(void)
+{
+    Cpu *c = &cur->cpu;
+    for (;;) {
+        if (vnes->nmi) {
+            take_interrupt(1);
+            return;
+        }
+        if (vnes->irq_pending && (native || !(c->p & FLAG_I)))
+            take_interrupt(0);
+        else
+            vnesAddCycles((int)((vnes->dots_per_line - vnes->dots + 2) / 3));
+    }
 }
 
 // Run the current machine until it reaches the end of its next tick.
@@ -285,13 +368,141 @@ typedef struct {
     int lo, hi;
 } Range;
 
+static Range ignore[16];
+static int ignore_count;
+static long max_ticks = -1;
+static FILE *dump;
+static const char *ppu_out, *coverage, *pcs_out;
+static int compare;
+
+// The game's reset and main loop in C (--native); see portTickEnd.
+void GameMain(void) __attribute__((weak));
+
+// Compare the machines after a tick; returns 1 on a difference.
+static int compare_tick(long tick)
+{
+    Machine *ref = &machines[0];
+    if (dump) {
+        uint32_t hdr[2] = { (uint32_t)tick, (uint32_t)ref->nes.frame };
+        fwrite(hdr, 4, 2, dump);
+        fwrite(ref->nes.ram, 1, sizeof ref->nes.ram, dump);
+    }
+    if (!compare)
+        return 0;
+    const uint8_t *a = machines[0].nes.ram, *b = machines[1].nes.ram;
+    int diffs = 0;
+    for (int addr = 0; addr < 0x800; addr++) {
+        int skip = 0;
+        for (int r = 0; r < ignore_count; r++)
+            skip |= addr >= ignore[r].lo && addr <= ignore[r].hi;
+        if (skip || a[addr] == b[addr])
+            continue;
+        if (!diffs++)
+            printf("tick %ld: state differs (ref / port)\n", tick);
+        if (diffs <= 32)
+            printf("  $%04X  %02X / %02X\n", addr, a[addr], b[addr]);
+    }
+    // PPU and mapper state.
+    const Vnes *p = &machines[0].nes, *q = &machines[1].nes;
+    struct {
+        const char *name;
+        const uint8_t *a, *b;
+        int size;
+    } areas[] = {
+        { "vram", p->vram, q->vram, sizeof p->vram },
+        { "palette", p->palette, q->palette, sizeof p->palette },
+        { "oam", p->oam, q->oam, sizeof p->oam },
+        { "mmc3 R", p->regs, q->regs, sizeof p->regs },
+        { "mmc3 select", &p->bank_select, &q->bank_select, 1 },
+        { "mirroring", &p->mirroring, &q->mirroring, 1 },
+        { "irq latch", &p->irq_latch, &q->irq_latch, 1 },
+        { "irq enabled", &p->irq_enabled, &q->irq_enabled, 1 },
+        { "ppuctrl", &p->ctrl, &q->ctrl, 1 },
+        { "ppumask", &p->mask, &q->mask, 1 },
+        { "apu", p->apu, q->apu, sizeof p->apu },
+        { "apu write hash", (const uint8_t *)&p->apu_hash, (const uint8_t *)&q->apu_hash, 4 },
+    };
+    for (size_t k = 0; k < sizeof areas / sizeof areas[0]; k++) {
+        for (int i = 0; i < areas[k].size; i++) {
+            if (areas[k].a[i] == areas[k].b[i])
+                continue;
+            if (!diffs++)
+                printf("tick %ld: state differs (ref / port)\n", tick);
+            if (diffs <= 32)
+                printf("  %s[%03X]  %02X / %02X\n", areas[k].name, i, areas[k].a[i], areas[k].b[i]);
+        }
+    }
+    if (diffs > 32)
+        printf("  ... %d bytes in total\n", diffs);
+    return diffs != 0;
+}
+
+// Output files and the summary; returns the exit status.
+static int finish(int status)
+{
+    if (dump)
+        fclose(dump);
+    if (ppu_out) {
+        use_machine(&machines[0]);
+        FILE *p = fopen(ppu_out, "wb");
+        uint8_t nt[0x1000];
+        for (int i = 0; i < 0x1000; i++)
+            nt[i] = vnes->vram[vnesNametableIndex(0x2000 + i)];
+        fwrite(nt, 1, sizeof nt, p);
+        fwrite(vnes->palette, 1, 32, p);
+        fwrite(vnes->oam, 1, 256, p);
+        fwrite(vnes->regs, 1, 8, p);
+        fclose(p);
+    }
+    fprintf(stderr, "nesref: %ld ticks, %ld frames\n", machines[0].tick, machines[0].nes.frame);
+    if (coverage) {
+        FILE *cov = fopen(coverage, "a");
+        for (int i = 0; i < hook_count; i++)
+            fprintf(cov, "%s %ld %ld\n", hooks[i]->name, orig_calls[i], hook_calls[i]);
+        fclose(cov);
+    }
+    if (port_pcs) {
+        FILE *pf = fopen(pcs_out, "a");
+        for (long i = 0; i < 64 * 0x10000L; i++)
+            if (port_pcs[i])
+                fprintf(pf, "%04lX %ld %ld\n", i & 0xFFFF, (i >> 16) - 1, port_pcs[i]);
+        fclose(pf);
+    }
+    if (compare && !status)
+        fprintf(stderr, "nesref: RAM and PPU state match on every tick\n");
+    return status;
+}
+
+// Input and pokes for the port machine's next tick (--native).
+static void start_port_tick(void)
+{
+    vnes->pad = pad_for_tick(cur->tick);
+    for (int i = 0; i < poke_count; i++)
+        if (pokes[i].tick == cur->tick)
+            vnes->ram[pokes[i].addr] = pokes[i].value;
+}
+
+// --native: the port's main loop calls this where the original reaches the
+// tick PC. Runs the reference machine through the same tick, compares, and
+// exits when the run is over or the state differs.
+void portTickEnd(void)
+{
+    Machine *port = cur;
+    port->tick++;
+    use_machine(&machines[0]);
+    run_tick();
+    int status = compare_tick(machines[0].tick - 1);
+    if (status || machines[0].tick >= max_ticks)
+        exit(finish(status));
+    use_machine(port);
+    start_port_tick();
+}
+
+
 int main(int argc, char **argv)
 {
-    const char *rom = NULL, *out = NULL, *input = NULL, *ppu_out = NULL, *coverage = NULL, *pcs_out = NULL;
-    long max_ticks = -1;
-    int speed = 1, compare = 0;
-    Range ignore[16];
-    int ignore_count = 0;
+    const char *rom = NULL, *out = NULL, *input = NULL;
+    int speed = 1;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--tick-pc") && i + 1 < argc)
             tick_pc = strtol(argv[++i], NULL, 16);
@@ -313,6 +524,8 @@ int main(int argc, char **argv)
             coverage = argv[++i];
         else if (!strcmp(argv[i], "--compare"))
             compare = 1;
+        else if (!strcmp(argv[i], "--native"))
+            native = compare = 1;
         else if (!strcmp(argv[i], "--ignore") && i + 1 < argc && ignore_count < 16) {
             char *end;
             ignore[ignore_count].lo = strtol(argv[++i], &end, 16);
@@ -392,103 +605,24 @@ int main(int argc, char **argv)
         cpuReset(&m->cpu);
     }
 
-    FILE *dump = out ? fopen(out, "wb") : NULL;
+    dump = out ? fopen(out, "wb") : NULL;
+    if (native) {
+        if (!GameMain) {
+            fprintf(stderr, "nesref: --native needs the game's GameMain()\n");
+            return 2;
+        }
+        use_machine(&machines[1]);
+        start_port_tick();
+        GameMain(); // returns only through exit() in portTickEnd
+        return 1;
+    }
     int status = 0;
-    for (long tick = 0; tick < max_ticks; tick++) {
+    for (long tick = 0; tick < max_ticks && !status; tick++) {
         for (int i = 0; i < count; i++) {
             use_machine(&machines[i]);
             run_tick();
         }
-        Machine *ref = &machines[0];
-        if (dump) {
-            uint32_t hdr[2] = { (uint32_t)tick, (uint32_t)ref->nes.frame };
-            fwrite(hdr, 4, 2, dump);
-            fwrite(ref->nes.ram, 1, sizeof ref->nes.ram, dump);
-        }
-        if (!compare)
-            continue;
-        const uint8_t *a = machines[0].nes.ram, *b = machines[1].nes.ram;
-        int diffs = 0;
-        for (int addr = 0; addr < 0x800; addr++) {
-            int skip = 0;
-            for (int r = 0; r < ignore_count; r++)
-                skip |= addr >= ignore[r].lo && addr <= ignore[r].hi;
-            if (skip || a[addr] == b[addr])
-                continue;
-            if (!diffs++)
-                printf("tick %ld: state differs (ref / port)\n", tick);
-            if (diffs <= 32)
-                printf("  $%04X  %02X / %02X\n", addr, a[addr], b[addr]);
-        }
-        // PPU and mapper state.
-        const Vnes *p = &machines[0].nes, *q = &machines[1].nes;
-        struct {
-            const char *name;
-            const uint8_t *a, *b;
-            int size;
-        } areas[] = {
-            { "vram", p->vram, q->vram, sizeof p->vram },
-            { "palette", p->palette, q->palette, sizeof p->palette },
-            { "oam", p->oam, q->oam, sizeof p->oam },
-            { "mmc3 R", p->regs, q->regs, sizeof p->regs },
-            { "mmc3 select", &p->bank_select, &q->bank_select, 1 },
-            { "mirroring", &p->mirroring, &q->mirroring, 1 },
-            { "irq latch", &p->irq_latch, &q->irq_latch, 1 },
-            { "irq enabled", &p->irq_enabled, &q->irq_enabled, 1 },
-            { "ppuctrl", &p->ctrl, &q->ctrl, 1 },
-            { "ppumask", &p->mask, &q->mask, 1 },
-            { "apu", p->apu, q->apu, sizeof p->apu },
-            { "apu write hash", (const uint8_t *)&p->apu_hash, (const uint8_t *)&q->apu_hash, 4 },
-        };
-        for (size_t k = 0; k < sizeof areas / sizeof areas[0]; k++) {
-            for (int i = 0; i < areas[k].size; i++) {
-                if (areas[k].a[i] == areas[k].b[i])
-                    continue;
-                if (!diffs++)
-                    printf("tick %ld: state differs (ref / port)\n", tick);
-                if (diffs <= 32)
-                    printf("  %s[%03X]  %02X / %02X\n", areas[k].name, i, areas[k].a[i], areas[k].b[i]);
-            }
-        }
-        if (diffs) {
-            if (diffs > 32)
-                printf("  ... %d bytes in total\n", diffs);
-            status = 1;
-            break;
-        }
+        status = compare_tick(tick);
     }
-
-    if (dump)
-        fclose(dump);
-    if (ppu_out) {
-        use_machine(&machines[0]);
-        FILE *p = fopen(ppu_out, "wb");
-        uint8_t nt[0x1000];
-        for (int i = 0; i < 0x1000; i++)
-            nt[i] = vnes->vram[vnesNametableIndex(0x2000 + i)];
-        fwrite(nt, 1, sizeof nt, p);
-        fwrite(vnes->palette, 1, 32, p);
-        fwrite(vnes->oam, 1, 256, p);
-        fwrite(vnes->regs, 1, 8, p);
-        fclose(p);
-    }
-    fprintf(stderr, "nesref: %ld ticks, %ld frames\n", machines[0].tick, machines[0].nes.frame);
-    if (coverage) {
-        FILE *cov = fopen(coverage, "a");
-        for (int i = 0; i < hook_count; i++)
-            fprintf(cov, "%s %ld %ld\n", hooks[i]->name, orig_calls[i], hook_calls[i]);
-        fclose(cov);
-    }
-    if (port_pcs) {
-        FILE *pf = fopen(pcs_out, "a");
-        for (long i = 0; i < 64 * 0x10000L; i++)
-            if (port_pcs[i])
-                fprintf(pf, "%04lX %ld %ld\n", i & 0xFFFF, (i >> 16) - 1, port_pcs[i]);
-        fclose(pf);
-    }
-    if (compare) {
-        if (!status)
-            fprintf(stderr, "nesref: RAM and PPU state match on every tick\n");
-    }
-    return status;
+    return finish(status);
 }
