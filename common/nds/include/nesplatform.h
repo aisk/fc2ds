@@ -11,7 +11,8 @@ typedef struct {
     int prg_size, chr_size;
     void (*nmi)(void); // the game's NMI handler
     void (*irq)(void); // the game's IRQ handler (acknowledges the MMC3 IRQ)
+    void (*main)(void); // the game's reset + main loop (never returns)
 } NesPlatform;
 
-// Set up video and the virtual NES. Call before the game's main loop.
-void nesPlatformInit(const NesPlatform *p);
+// Set up video and the virtual NES, then run the game.
+void nesPlatformRun(const NesPlatform *p);

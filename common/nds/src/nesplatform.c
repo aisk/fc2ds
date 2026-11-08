@@ -10,12 +10,13 @@ static Vnes nes;
 static NesPlatform platform;
 static VrasterFrame frame;
 
-void nesPlatformInit(const NesPlatform *p)
+void nesPlatformRun(const NesPlatform *p)
 {
     platform = *p;
     vnesInit(&nes, p->prg, p->prg_size, p->chr, p->chr_size);
     vnes = &nes;
     ndsVideoInit(p->chr, p->chr_size);
+    p->main();
 }
 
 // NES joypad bits: A, B, Select, Start, Up, Down, Left, Right.

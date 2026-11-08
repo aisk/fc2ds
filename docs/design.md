@@ -45,16 +45,46 @@ Anything that changes gameplay itself (difficulty, damage, item behaviour) is no
 ## 4. Architecture
 
 ```
-game logic (C, ported per game)  ->  virtual NES PPU state (nametables, OAM, palettes, scroll)
-                                            |
-                common/nds renderer  ------>  NDS BG0/BG1 + OAM (top screen)
-                                            \->  HUD/map/menus (bottom screen, native NDS)
+game logic (C, ported per game, port/)
+    |  reads/writes the NES RAM, PPU, MMC3 and APU registers
+    v
+common/vnes: virtual NES state (RAM, MMC3, PPU memory/registers, joypad,
+             APU register log, scanline timing, raster log)
+    |  vraster: per-line view of a finished frame (scroll, CHR banks, ...)
+    v
+common/nds: ndsframe (frame -> NDS screen state) -> ndsvideo (hardware)
+            nesplatform (frame timing, NMI/IRQ, input)
 ```
 
-- Phase A: game logic writes into a virtual NES (`common/vnes`: RAM, MMC3, PPU memory and registers, joypad), the same model as the original code, and keeps the original RAM layout (`ram.h`, generated from `ram.md` and the notes). The renderer converts the PPU state to NDS hardware every vblank. Porting stays mechanical and verifiable.
-- Phase B (optional, per game): replace parts with native NDS rendering (wider view, extra layers, bottom-screen UI).
-- CHR banks (MMC3 1K/2K switching) map to NDS VRAM tile slots. The full 128 KiB CHR fits in VRAM, so bank switching becomes a tile index offset.
+- Phase A: game logic writes into a virtual NES, the same model as the original code, and keeps the original RAM layout (`ram.h`, generated from `ram.md` and the notes). Porting stays mechanical and verifiable. There is no CPU emulation and no dot-by-dot PPU: the renderer draws a whole frame from the PPU state at its end plus a log of the raster register writes during the frame.
+- Phase B (optional, per game): replace parts with native NDS rendering (wider view, extra layers, bottom-screen UI), move data out of ROM formats into editable assets.
 - Audio: port the game's sound driver data and play it through a 2A03 synth on ARM7 (square/triangle/noise/DPCM in PSG channels or a mixed stream).
+
+### The shared NES layer
+
+Everything below is game independent and meant to be reused by every port:
+
+- `common/vnes/vnes.[ch]`: the virtual NES. MMC3 only so far (other mappers go here when a game needs them). Besides the state, it keeps a snapshot of the raster registers at the start of each frame and logs every access to them during the visible lines (`$2000/$2001/$2005/$2006`, `$2002` reads, MMC3 bank select/data and mirroring).
+- `common/vnes/vraster.[ch]`: replays that log into 240 `VrasterLine`s: scroll position in the 512x512 nametable plane, PPUCTRL/PPUMASK, CHR banks and mirroring of each line. Mid-frame splits (status bars, parallax, wave effects, CHR switches) come out of this without per-game code.
+- `common/vnes/vrender.[ch]`: host software renderer of a frame (screenshots, `nesref --shot`).
+- `common/nds/ndsframe.[ch]`: turns a frame into NDS screen state without touching hardware: a 512x512 text BG holding the nametable plane, per-line scroll, 8x8 OBJs (8x16 split in two), palettes, and a cache that loads the NES CHR tiles in use into 1024 NDS tile slots. `ndsScreenCompose` draws the same state on the host, so the NDS output can be checked without an emulator (`nesref --shot` writes `*-nds.ppm`).
+- `common/nds/ndsvideo.[ch]`: the hardware backend. Main and sub engine BG0 + OBJ, per-line scroll by HBlank DMA, window 0 for the lines a screen shows.
+- `common/nds/nesplatform.[ch]`: the frame loop. `portWaitNmi()` lets NES time pass line by line, calls the game's IRQ handler when the MMC3 counter fires, shows the frame after line 239 (waiting for the NDS vblank) and then calls the game's NMI handler. Game logic takes no NES time.
+- `common/tools/nesref`: host runner and verifier (section 5, step 7).
+
+What a game provides:
+
+1. `port/`: the ported code, with `GameMain()` (reset + main loop calling `portWaitNmi()` and `portTickEnd()`), `Nmi()` and `Irq()`.
+2. `GameScreenLayout()`: which NES lines go to the top screen (cropped to 192, e.g. following the player) and which to the bottom screen (e.g. the status bar below a split). See `games/<name>/port/screen.c`.
+3. `src/`: `main()` filling a `NesPlatform` (PRG/CHR from the ROM extracted at build time, the NMI/IRQ handlers, `GameMain`) and calling `nesPlatformRun()`.
+
+Note: RAM names from `ram.h` are macros; include the vnes/ndsframe headers before `port.h` where both are needed, since names like `mirroring` clash with struct fields.
+
+### Renderer TODO
+
+- Screen edge flicker while scrolling: the game streams new tile/attribute columns at the edge of the view, and on the NES those columns show half-updated tiles or wrong attributes (horizontal mirroring, no left-column mask on the right). Section 3 says these get drawn correctly: e.g. hide the 8 px columns being streamed, or keep the edge columns out of the shown area by cropping/widening the plane view.
+- Flicker transparency: some objects are drawn every other frame on purpose so that they look half transparent on a CRT (e.g. the spider threads in the first port stage 1). Render them steady with NDS alpha blending instead: either detect sprites that alternate frame by frame in ndsframe, or let the game mark them (per object type).
+- Colour: calibrated palette, emphasis bits, smooth fades (section 3).
 
 ## 5. Workflow per game
 
