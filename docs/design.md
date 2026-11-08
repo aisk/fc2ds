@@ -53,12 +53,12 @@ common/vnes: virtual NES state (RAM, MMC3, PPU memory/registers, joypad,
     |  vraster: per-line view of a finished frame (scroll, CHR banks, ...)
     v
 common/nds: ndsframe (frame -> NDS screen state) -> ndsvideo (hardware)
-            nesplatform (frame timing, NMI/IRQ, input)
+            nesplatform (frame timing, NMI/IRQ, input, sound stream)
 ```
 
 - Phase A: game logic writes into a virtual NES, the same model as the original code, and keeps the original RAM layout (`ram.h`, generated from `ram.md` and the notes). Porting stays mechanical and verifiable. There is no CPU emulation and no dot-by-dot PPU: the renderer draws a whole frame from the PPU state at its end plus a log of the raster register writes during the frame.
 - Phase B (optional, per game): replace parts with native NDS rendering (wider view, extra layers, bottom-screen UI), move data out of ROM formats into editable assets.
-- Audio: port the game's sound driver data and play it through a 2A03 synth on ARM7 (square/triangle/noise/DPCM in PSG channels or a mixed stream).
+- Audio: the ported sound driver writes the APU registers as the original does, and a software 2A03 (`vapu`) turns them into a mixed stream. Phase B can swap channels for richer instruments without touching the driver.
 
 ### The shared NES layer
 
@@ -67,9 +67,10 @@ Everything below is game independent and meant to be reused by every port:
 - `common/vnes/vnes.[ch]`: the virtual NES. MMC3 only so far (other mappers go here when a game needs them). Besides the state, it keeps a snapshot of the raster registers at the start of each frame and logs every access to them during the visible lines (`$2000/$2001/$2005/$2006`, `$2002` reads, MMC3 bank select/data and mirroring).
 - `common/vnes/vraster.[ch]`: replays that log into 240 `VrasterLine`s: scroll position in the 512x512 nametable plane, PPUCTRL/PPUMASK, CHR banks and mirroring of each line. Mid-frame splits (status bars, parallax, wave effects, CHR switches) come out of this without per-game code.
 - `common/vnes/vrender.[ch]`: host software renderer of a frame (screenshots, `nesref --shot`).
+- `common/vnes/vapu.[ch]`: software 2A03: pulse, triangle and noise with envelopes, sweep, length/linear counters, the frame counter and the NES mixer curves (no DPCM yet). `Vnes.apu_write` feeds it the register writes as they happen. `nesref --wav FILE` writes the reference machine's sound for listening on the host.
 - `common/nds/ndsframe.[ch]`: turns a frame into NDS screen state without touching hardware: a 512x512 text BG holding the nametable plane, per-line scroll, 8x8 OBJs (8x16 split in two), palettes, and a cache that loads the NES CHR tiles in use into 1024 NDS tile slots. `ndsScreenCompose` draws the same state on the host, so the NDS output can be checked without an emulator (`nesref --shot` writes `*-nds.ppm`).
 - `common/nds/ndsvideo.[ch]`: the hardware backend. Main and sub engine BG0 + OBJ, per-line scroll by HBlank DMA, window 0 for the lines a screen shows.
-- `common/nds/nesplatform.[ch]`: the frame loop. `portWaitNmi()` lets NES time pass line by line, calls the game's IRQ handler when the MMC3 counter fires, shows the frame after line 239 (waiting for the NDS vblank) and then calls the game's NMI handler. Game logic takes no NES time.
+- `common/nds/nesplatform.[ch]`: the frame loop. `portWaitNmi()` lets NES time pass line by line, calls the game's IRQ handler when the MMC3 counter fires, shows the frame after line 239 (waiting for the NDS vblank) and then calls the game's NMI handler. Game logic takes no NES time. Sound is a 32768 Hz maxmod stream in manual mode: once per frame it asks `vapu` for the samples played since the last frame, so synthesis runs on the ARM9 between the frames' register writes and needs no locking.
 - `common/tools/nesref`: host runner and verifier (section 5, step 7).
 
 What a game provides:

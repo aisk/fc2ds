@@ -51,7 +51,7 @@ HOSTDIR		:= $(BUILDDIR)/host
 GAME_SOURCES	:= $(shell find src -name "*.c" -o -name "*.s")
 COMMON_SOURCES	:= $(shell find $(COMMON_NDS)/src -name "*.c" -o -name "*.s")
 PORT_SOURCES	:= $(wildcard port/*.c)
-VNES_SOURCES	:= $(if $(PORT_SOURCES),$(VNES)/vnes.c $(VNES)/vraster.c)
+VNES_SOURCES	:= $(if $(PORT_SOURCES),$(VNES)/vnes.c $(VNES)/vraster.c $(VNES)/vapu.c)
 
 OBJS		:= $(addprefix $(OBJDIR)/game/,$(addsuffix .o,$(GAME_SOURCES:src/%=%))) \
 		   $(addprefix $(OBJDIR)/common/,$(addsuffix .o,$(COMMON_SOURCES:$(COMMON_NDS)/src/%=%))) \
@@ -66,13 +66,13 @@ DEFINES		+= -D__NDS__ -D__BLOCKSDS__ -DARM9
 ARCH		:= -mthumb -mcpu=arm946e-s+nofp
 SPECS		:= $(BLOCKSDS)/sys/crts/ds_arm9.specs
 INCLUDES	:= -Isrc -I$(COMMON_NDS)/include -I$(GENDIR) -I$(VNES) -Iport -I$(HOSTDIR) \
-		   -I$(BLOCKSDS)/libs/libnds/include
+		   -I$(BLOCKSDS)/libs/libnds/include -I$(BLOCKSDS)/libs/maxmod/include
 
 CFLAGS		:= -Wall -Wextra -std=gnu17 -O2 -ffunction-sections -fdata-sections \
 		   $(ARCH) $(INCLUDES) $(DEFINES) -specs=$(SPECS) $(CFLAGS)
 ASFLAGS		:= -x assembler-with-cpp $(ARCH) $(INCLUDES) $(DEFINES) -specs=$(SPECS)
-LDFLAGS		:= $(ARCH) -L$(BLOCKSDS)/libs/libnds/lib -Wl,-Map,$(MAP) -Wl,--gc-sections \
-		   -Wl,--start-group -lnds9 -lc -Wl,--end-group -specs=$(SPECS)
+LDFLAGS		:= $(ARCH) -L$(BLOCKSDS)/libs/libnds/lib -L$(BLOCKSDS)/libs/maxmod/lib -Wl,-Map,$(MAP) -Wl,--gc-sections \
+		   -Wl,--start-group -lmm9 -lnds9 -lc -Wl,--end-group -specs=$(SPECS)
 
 # Text and fonts
 # --------------
@@ -198,7 +198,7 @@ $(HOSTDIR)/ram.h: $(RAM_NAMES) $(TOOLS)/mkramh.py $(TOOLS)/trace6502.py
 $(VERIFY_BIN): $(PORT_SOURCES) $(wildcard port/*.h) $(HOSTDIR)/ram.h $(wildcard $(NESREF)/*.[ch]) $(wildcard $(VNES)/*.[ch])
 	@echo "  HOSTCC  $@"
 	$(V)$(HOST_CC) -O2 -g -Wall -Wextra -DNESREF -Iport -I$(HOSTDIR) -I$(NESREF) -I$(VNES) -I$(COMMON_NDS)/include -o $@ \
-		$(NESREF)/nesref.c $(NESREF)/cpu6502.c $(VNES)/vnes.c $(VNES)/vraster.c $(VNES)/vrender.c \
+		$(NESREF)/nesref.c $(NESREF)/cpu6502.c $(VNES)/vnes.c $(VNES)/vraster.c $(VNES)/vrender.c $(VNES)/vapu.c \
 		$(COMMON_NDS)/src/ndsframe.c $(COMMON_NDS)/src/nes_chr.c $(PORT_SOURCES)
 
 # --native runs the port as it runs on the NDS (no 6502 at all); with

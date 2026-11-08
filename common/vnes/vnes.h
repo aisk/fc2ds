@@ -47,6 +47,7 @@ typedef struct Vnes {
     // order (address and value), so the sound code can be verified.
     uint8_t apu[0x18];
     uint32_t apu_hash;
+    void (*apu_write)(uint16_t addr, uint8_t value); // optional, e.g. vapuWrite
 
     // Joypad 1: bit 0 = A ... bit 7 = Right, in $4016 read order.
     uint8_t pad, pad_shift, strobe;

@@ -1,7 +1,8 @@
 // Runs a ported NES game on the NDS: the virtual NES in common/vnes keeps
 // the original frame timing (scanline counter for MMC3 IRQs, vblank NMI),
 // the game's C main loop calls portWaitNmi() where the original waits for
-// vblank, and every finished frame is shown with ndsvideo.
+// vblank, every finished frame is shown with ndsvideo and the APU writes
+// are played through common/vnes/vapu.
 #pragma once
 
 #include <stdint.h>

@@ -1,8 +1,10 @@
 #include "nesplatform.h"
 
+#include <maxmod9.h>
 #include <nds.h>
 
 #include "ndsvideo.h"
+#include "vapu.h"
 #include "vnes.h"
 #include "vraster.h"
 
@@ -10,12 +12,41 @@ static Vnes nes;
 static NesPlatform platform;
 static VrasterFrame frame;
 
+// Sound: the APU writes go straight to vapu, and a maxmod stream in manual
+// mode asks for the samples it has played once per frame (present), so the
+// synthesis runs on the main thread between the frames' register writes.
+#define SOUND_RATE 32768
+
+static mm_word sound_fill(mm_word length, mm_addr dest, mm_stream_formats format)
+{
+    (void)format;
+    vapuRender(dest, (int)length);
+    return length;
+}
+
+static void sound_init(void)
+{
+    mmInitNoSoundbank();
+    vapuInit(SOUND_RATE);
+    vnes->apu_write = vapuWrite;
+    mm_stream stream = {
+        .sampling_rate = SOUND_RATE,
+        .buffer_length = 2048,
+        .callback = sound_fill,
+        .format = MM_STREAM_16BIT_MONO,
+        .timer = MM_TIMER0,
+        .manual = true,
+    };
+    mmStreamOpen(&stream);
+}
+
 void nesPlatformRun(const NesPlatform *p)
 {
     platform = *p;
     vnesInit(&nes, p->prg, p->prg_size, p->chr, p->chr_size);
     vnes = &nes;
     ndsVideoInit(p->chr, p->chr_size);
+    sound_init();
     p->main();
 }
 
@@ -38,6 +69,7 @@ static void present(void)
     ndsVideoBuild(&frame, &layout);
     swiWaitForVBlank();
     ndsVideoCommit();
+    mmStreamUpdate();
     vnes->pad = read_pad();
 }
 

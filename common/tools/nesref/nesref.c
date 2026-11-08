@@ -48,6 +48,10 @@
 //                    both NDS screens as common/nds ndsframe builds them
 //   --pcs FILE       append "PC bank count" for every 6502 instruction the
 //                    port machine still runs (what is left to port)
+//   --wav FILE       synthesize the reference machine's sound with
+//                    common/vnes/vapu (one NES frame of samples per frame,
+//                    register writes applied as they happen) into a 16-bit
+//                    mono WAV at the NDS stream rate
 //   --trace          print every instruction (slow)
 //
 // The pad is applied per tick, not per frame, so lag frames in the original
@@ -60,6 +64,7 @@
 
 #include "vnes.h"
 #include "vrender.h"
+#include "vapu.h"
 #include "ndsframe.h"
 #include "nes_chr.h"
 
@@ -353,6 +358,37 @@ void portWaitNmi(void)
     }
 }
 
+// --wav: sound of the reference machine.
+#define WAV_RATE 32768
+static FILE *wav;
+static long wav_samples, wav_frame;
+static uint32_t wav_frac;
+
+static void wav_frame_done(void)
+{
+    // NES frames are 29780.5 CPU cycles: 60.0988 per second.
+    int16_t buf[WAV_RATE / 50];
+    wav_frac += (uint32_t)((uint64_t)WAV_RATE * 29780500 / VAPU_CPU_HZ);
+    int n = (int)(wav_frac / 1000);
+    wav_frac %= 1000;
+    vapuRender(buf, n);
+    fwrite(buf, 2, n, wav);
+    wav_samples += n;
+}
+
+static void wav_header(uint32_t samples)
+{
+    uint32_t data = samples * 2;
+    uint8_t h[44] = "RIFF....WAVEfmt \x10\0\0\0\1\0\1\0........\2\0\x10\0data....";
+    uint32_t v[4] = { 36 + data, WAV_RATE, WAV_RATE * 2, data };
+    int at[4] = { 4, 24, 28, 40 };
+    for (int i = 0; i < 4; i++)
+        for (int b = 0; b < 4; b++)
+            h[at[i] + b] = (uint8_t)(v[i] >> (8 * b));
+    fseek(wav, 0, SEEK_SET);
+    fwrite(h, 1, 44, wav);
+}
+
 // Run the current machine until it reaches the end of its next tick.
 static void run_tick(void)
 {
@@ -364,6 +400,10 @@ static void run_tick(void)
     long steps = 0;
     do {
         step();
+        if (wav && cur == &machines[0] && vnes->frame != wav_frame) {
+            wav_frame = vnes->frame;
+            wav_frame_done();
+        }
         // A tick normally takes well under 100k steps; this catches a port
         // that waits for something only the original would change.
         if (++steps > 5000000)
@@ -545,6 +585,10 @@ static int finish(int status)
 {
     if (dump)
         fclose(dump);
+    if (wav) {
+        wav_header((uint32_t)wav_samples);
+        fclose(wav);
+    }
     if (ppu_out) {
         use_machine(&machines[0]);
         FILE *p = fopen(ppu_out, "wb");
@@ -640,7 +684,13 @@ int main(int argc, char **argv)
             shots[shot_count++].prefix = *end == ':' ? end + 1 : "shot";
         } else if (!strcmp(argv[i], "--pcs") && i + 1 < argc)
             pcs_out = argv[++i];
-        else if (!strcmp(argv[i], "--trace"))
+        else if (!strcmp(argv[i], "--wav") && i + 1 < argc) {
+            if (!(wav = fopen(argv[++i], "wb"))) {
+                perror(argv[i]);
+                return 1;
+            }
+            wav_header(0);
+        } else if (!strcmp(argv[i], "--trace"))
             trace = 1;
         else if (!rom)
             rom = argv[i];
@@ -710,6 +760,10 @@ int main(int argc, char **argv)
         m->nes.dots_per_line = 341L * speed;
         m->cpu = (Cpu){ .read = bus_read, .write = bus_write };
         cpuReset(&m->cpu);
+    }
+    if (wav) {
+        vapuInit(WAV_RATE);
+        machines[0].nes.apu_write = vapuWrite;
     }
 
     dump = out ? fopen(out, "wb") : NULL;
