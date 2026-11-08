@@ -13,7 +13,7 @@ Each phase lists what it produces and when it is done. The game's `README.md` ke
   - The sprite 0 hit is modelled (from the OAM and the scroll at the start of the frame), so a status bar split that polls PPUSTATUS works.
   - CHR ROM only (no CHR RAM yet).
   - The disassembly tracer models PRG as one fixed segment plus pages that switch in one window.
-  - NTSC timing; no DPCM in the synthesizer.
+  - NTSC timing; no DPCM sample playback in the synthesizer (the $4011 direct level is mixed).
 
 ## Phase 0: project
 
@@ -147,7 +147,7 @@ Done when: the user has played the title, the first stage, a shop or menu and a 
 Goal: the original music and effects. Once the sound driver is ported and verified (the comparison includes every APU write, in order), sound needs no game code: `common/vnes/vapu` synthesizes the APU writes, and `nesplatform` streams them through maxmod.
 
 - Listen on the host: `--wav FILE` writes the run's sound.
-- DPCM is not implemented. If the game uses `$4010-$4013`, add it to `vapu.c`.
+- DPCM sample playback is not implemented (the $4011 direct level is). If the game plays samples (`$4010`, `$4012`, `$4013`, bit 4 of `$4015`), add it to `vapu.c`.
 
 Done when: the user has listened on melonDS.
 

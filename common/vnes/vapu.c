@@ -55,6 +55,7 @@ static struct {
     int32_t hp_prev_in, hp_prev_out, lp;
     int16_t pulse_mix[31];
     int16_t tnd_mix[203];
+    uint8_t dmc_level; // $4011 direct load (no sample playback)
 } apu VAPU_STATE;
 
 // Frame counter events in CPU cycles (NTSC), 4-step and 5-step mode: four
@@ -236,6 +237,12 @@ void vapuWrite(uint16_t addr, uint8_t v)
     if (r < 0 || r > 0x17)
         return;
     catch_up();
+    if (r == 0x11) {
+        // DMC output level, set directly: it adds to the triangle/noise
+        // DAC, so it also changes their loudness (games write it for that).
+        apu.dmc_level = v & 0x7F;
+        return;
+    }
     if (r < 8) {
         Channel *c = &apu.ch[r >> 2];
         switch (r & 3) {
@@ -375,7 +382,7 @@ VAPU_HOT void vapuRender(int16_t *out, int samples)
             n->level = (lfsr & 1) ? 0 : n->vol;
         }
 
-        int32_t x = apu.pulse_mix[p1->level + p2->level] + apu.tnd_mix[3 * triangle_wave[t->step] + 2 * n->level];
+        int32_t x = apu.pulse_mix[p1->level + p2->level] + apu.tnd_mix[3 * triangle_wave[t->step] + 2 * n->level + apu.dmc_level];
 
         // ~90 Hz high-pass (removes the DC offset of the DAC curves) and a
         // light low-pass against aliasing, as on the console. Division

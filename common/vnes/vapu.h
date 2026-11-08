@@ -1,7 +1,8 @@
 // 2A03 APU synthesizer: pulse 1/2, triangle and noise with envelopes,
 // sweep, length and linear counters and the frame counter, mixed with the
-// NES's non-linear DAC curves. DPCM is not implemented yet (no ported game
-// uses it so far). Platform neutral C, integer only after vapuInit.
+// NES's non-linear DAC curves, plus the DMC level written to $4011. DPCM
+// sample playback is not implemented yet (no ported game uses it so far).
+// Platform neutral C, integer only after vapuInit.
 //
 // The caller decides timing: vapuWrite applies a register write at once,
 // vapuRender produces the next samples. Both nesref --wav and the NDS render
