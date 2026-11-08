@@ -171,6 +171,7 @@ class Tracer:
     table_ptrs: dict[int, int] = field(default_factory=dict)  # hi var -> lo var
     pending: set = field(default_factory=set)  # (seg name, addr, ctx) tables found while walking
     seen: set = field(default_factory=set)
+    decided: set = field(default_factory=set)  # branches always taken on some path
     origin: dict[tuple[str, int], str] = field(default_factory=dict)  # entry -> who added it
     entry_of: dict[tuple[str, int], int] = field(default_factory=dict)  # instruction -> walk entry
     work: deque = field(default_factory=deque)
@@ -322,10 +323,15 @@ class Tracer:
     def walk(self, seg: Segment, addr: int, ctx: int | None, a: int | None) -> None:
         lay = self.lay
         imm_store: dict[int, int] = {}
+        flags: dict[str, bool] = {}
         entry = addr
         while True:
             key = (seg.name, addr, ctx)
             if key in self.seen:
+                if addr == entry and (seg.name, addr) in self.decided:
+                    # A branch that was always taken on the way through is
+                    # entered here with unknown flags: trace its fall-through.
+                    self.work.append((seg, addr + 2, ctx, None))
                 return
             if not seg.has(addr):
                 self.err(seg, entry, f"{seg.name}: execution runs off segment at ${addr:04X}")
@@ -375,6 +381,12 @@ class Tracer:
                     seg.entries.setdefault(dest, "L")
                 else:
                     self.err(seg, entry, f"{seg.name}:{addr:04X} branch leaves segment")
+                # A flag set by the previous instruction ("ldx #4 / bne",
+                # "clc / bcc") makes some branches unconditional.
+                cond = BRANCH_COND.get(mnem)
+                if cond and cond[0] in flags and flags[cond[0]] == cond[1]:
+                    self.decided.add((seg.name, addr))
+                    return
             elif mnem == "jmp" and mode == "ind":
                 self.indirect.append(f"{seg.name}:{addr:04X} jmp (${operand:04X})")
                 return
@@ -414,7 +426,28 @@ class Tracer:
                         self.pending.add((t.name, dest, ctx))
             elif mnem in A_WRITERS or (mode == "acc"):
                 a = None
+            flags = imm_flags(mnem, mode, operand)
             addr = nxt
+
+
+# Branch mnemonic -> (flag, value that makes it taken).
+BRANCH_COND = {
+    "bne": ("z", False), "beq": ("z", True), "bpl": ("n", False), "bmi": ("n", True),
+    "bcc": ("c", False), "bcs": ("c", True), "bvc": ("v", False), "bvs": ("v", True),
+}
+
+
+def imm_flags(mnem: str, mode: str, operand: int) -> dict[str, bool]:
+    """Flags known right after an instruction, from its immediate operand."""
+    if mnem in ("lda", "ldx", "ldy") and mode == "imm":
+        return {"z": operand == 0, "n": bool(operand & 0x80)}
+    if mnem == "clc":
+        return {"c": False}
+    if mnem == "sec":
+        return {"c": True}
+    if mnem == "clv":
+        return {"v": False}
+    return {}
 
 
 # --------------------------------------------------------------------------
@@ -627,12 +660,16 @@ def trace(cfg: dict, rom: nesrom.NesRom, table_len: dict) -> tuple[Layout, Trace
 
     # Vectors
     vec = lay.fixed.base + lay.fixed.size - 6
-    for i in range(3):
+    # A vector the hardware never takes (IRQ without a mapper IRQ) may point
+    # at data: list it in unused_vectors to keep it out of the trace.
+    unused = set(cfg["layout"].get("unused_vectors", []))
+    for i, name in enumerate(("nmi", "reset", "irq")):
         p = vec + i * 2
         w = lay.fixed.byte(p) | (lay.fixed.byte(p + 1) << 8)
         lay.fixed.kind[p - lay.fixed.base] = 2
         lay.fixed.kind[p + 1 - lay.fixed.base] = 2
-        tr.push(lay.fixed, w, None, "S")
+        if name not in unused:
+            tr.push(lay.fixed, w, None, "S")
     tr.tables["fixed"].append((vec, vec + 5))
 
     for e in cfg.get("entry", []):

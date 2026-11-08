@@ -34,7 +34,7 @@ Goal: a complete, reassembling disassembly that later phases can read. Only the 
 1. Find the vectors (NMI, RESET, IRQ at $FFFA-$FFFF of the fixed bank) and read the reset code: how it maps banks, where the main loop is.
 2. Find the bank switch routine (its address goes in `bank_switch`; the tracer follows the page that `lda #n / jsr bank_switch` maps) and fix `[layout]` if the guess from the mapper is wrong.
 3. Find jump table dispatchers (`jsr Dispatch` followed by `.word` targets) and list them in `dispatchers`.
-4. Run `make disasm` and read `build/disasm/report.txt`: it lists indirect jumps and data the tracer could not resolve. Add `table` entries (pointer tables reached some other way), `entry` points (unreferenced routines) and `[indirect]` notes until the report is clean.
+4. Run `make disasm` and read `build/disasm/report.txt`: it lists indirect jumps and data the tracer could not resolve. Add `table` entries (pointer tables reached some other way), `entry` points (unreferenced routines) and `[indirect]` notes until the report is clean. A vector the hardware never takes (the IRQ of a mapper without IRQs) may point at data: list it in `unused_vectors` (`[layout]`). The tracer already knows that a branch right after `lda/ldx/ldy #imm`, `clc`, `sec` or `clv` can be unconditional.
 
 Done when: `make disasm` reports that all listings reassemble to the original ROM and `report.txt` has nothing unexplained. Write the vectors, bank layout, main loop and dispatchers into the README's technical notes.
 
