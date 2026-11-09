@@ -82,18 +82,19 @@ LDFLAGS		:= $(ARCH) -L$(BLOCKSDS)/libs/libnds/lib -L$(BLOCKSDS)/libs/maxmod/lib 
 # $(GENDIR)/text_<lang>.bin; Japanese gets font_ja.bin, the other languages
 # share font_zh.bin. Fonts come from common/fonts/fetch.sh. TEXT_EXTRA lists
 # more characters font_zh.bin needs (UI strings such as the subtitle
-# language names).
+# language names). A game without translations can set TEXT_EXTRA alone to get
+# font_zh.bin for its own UI.
 
 TEXT_BASE_LANG	?= ja
 
-ifneq ($(strip $(TEXT_LANGS)),)
+ifneq ($(strip $(TEXT_LANGS) $(TEXT_EXTRA)),)
 
 FONTDIR		:= $(FC2DS_ROOT)/common/fonts/fusion-pixel
 FONT_BDF_ja	:= $(FONTDIR)/fusion-pixel-12px-proportional-ja.bdf
 FONT_BDF_zh	:= $(FONTDIR)/fusion-pixel-12px-proportional-zh_hans.bdf
 TEXT_OTHER	:= $(filter-out ja,$(TEXT_LANGS))
 TEXT_ASSETS	:= $(foreach l,$(TEXT_LANGS),$(GENDIR)/text_$(l).bin) \
-		   $(if $(filter ja,$(TEXT_LANGS)),$(GENDIR)/font_ja.bin) $(if $(TEXT_OTHER),$(GENDIR)/font_zh.bin)
+		   $(if $(filter ja,$(TEXT_LANGS)),$(GENDIR)/font_ja.bin) $(if $(TEXT_OTHER)$(TEXT_EXTRA),$(GENDIR)/font_zh.bin)
 GEN_ASSETS	+= $(TEXT_ASSETS)
 
 $(GENDIR)/text_$(TEXT_BASE_LANG).bin: $(TEXT_BASE) $(TOOLS)/mktext.py
