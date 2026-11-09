@@ -51,6 +51,11 @@ typedef struct Vnes {
     uint8_t chr_is_ram;
     uint32_t chr_dirty[0x2000 / 16 / 32];
     uint8_t vram[0x1000], palette[32], oam[256];
+    // Sprites beyond the 64 of OAM, in OAM format, for ports that lift the
+    // NES sprite limit (a renderer draws them behind the OAM sprites). Not
+    // part of the NES, so never compared.
+    uint8_t oam_extra[256];
+    int oam_extra_count;
     uint16_t v, t;
     uint8_t x, w, read_buffer;
     uint8_t nmi;      // NMI edge for the CPU (host runner only)

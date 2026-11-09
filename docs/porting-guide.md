@@ -174,7 +174,8 @@ Done when: every message shows its translation, and the translated names in `tex
   - Read NES RAM only, and redraw a part only when its value changed. Draw at most one part per frame, and long work (a stage map) over several frames, since everything here adds to the frame's load.
   - Icons come straight from the CHR the status bar uses (`textBlitNes`), numbers and labels from the 12 px font (their characters go in `TEXT_EXTRA`).
   - `GameScreenLayout()` gets a switch to leave the status bar out. Keep a way back to the NES status bar (for example touching the HUD), and show it whenever the game uses the status bar for its own UI (for example a weapon select or pause screen).
-  - Sprite limits and slowdown are already gone, by design.
+  - The 8 sprites per line limit and slowdown are already gone, by design.
+  - Games that cap their own sprites at the 64 of OAM (dropping the rest, rotating OAM so the dropped ones flicker) can write the sprites past 64 into `vnes->oam_extra` behind a switch: the renderer draws up to 128.
   - Flicker that the game's own code makes on purpose (OAM rotation, objects drawn every other frame for transparency) needs a switch in the port plus, where the NES has no way to say it (alpha, more colours), extra fields that the C code writes for the renderer. The renderer TODO in `docs/design.md` lists what is open.
 
 ## Checking on the NDS

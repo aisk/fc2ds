@@ -23,9 +23,11 @@ void ndsTileCacheInit(NdsTileCache *c)
 
 void ndsTileCacheInvalidate(NdsTileCache *c, uint16_t key)
 {
-    uint16_t s = c->slot_of[key];
-    if (s != 0xFFFF && c->dirty_count < NDS_TILE_SLOTS)
-        c->dirty[c->dirty_count++] = s;
+    uint16_t s = c->slot_of[c->pairs ? key & ~1 : key];
+    if (s == 0xFFFF)
+        return;
+    for (int i = 0; i <= c->pairs && c->dirty_count < NDS_TILE_SLOTS; i++)
+        c->dirty[c->dirty_count++] = s + i;
 }
 
 // Slot for NES CHR tile `key`, loading it into a slot not used in this
@@ -50,6 +52,32 @@ static inline uint16_t cache_get(NdsTileCache *c, uint16_t key)
     c->used[s] = c->stamp;
     if (c->dirty_count < NDS_TILE_SLOTS)
         c->dirty[c->dirty_count++] = s;
+    return s;
+}
+
+// Even slot for the 8x16 pair whose top tile is `key` (key + 1 is the
+// bottom tile), loading both into a pair not used in this frame if needed.
+static inline uint16_t cache_get_pair(NdsTileCache *c, uint16_t key)
+{
+    uint16_t s = c->slot_of[key];
+    if (s != 0xFFFF) {
+        c->used[s] = c->stamp;
+        return s;
+    }
+    for (int n = 0; n < NDS_TILE_SLOTS / 2; n++) {
+        s = c->hand & ~1;
+        c->hand = (s + 2) % NDS_TILE_SLOTS;
+        if (c->used[s] != c->stamp)
+            break;
+    }
+    if (c->key[s] != 0xFFFF)
+        c->slot_of[c->key[s]] = 0xFFFF;
+    c->key[s] = key;
+    c->key[s + 1] = key + 1;
+    c->slot_of[key] = s;
+    c->used[s] = c->stamp;
+    for (int i = 0; i < 2 && c->dirty_count < NDS_TILE_SLOTS; i++)
+        c->dirty[c->dirty_count++] = s + i;
     return s;
 }
 
@@ -96,6 +124,20 @@ static void add_sprite(NdsScreen *s, NdsTileCache *obj, const VrasterLine *l, ui
     NdsOamEntry *e = &s->oam[s->oam_count++];
     e->attr0 = (uint16_t)(y & 0xFF);                          // square, 16 colours
     e->attr1 = (uint16_t)((x & 0x1FF) | (at & 0x40 ? 1 << 12 : 0) | (at & 0x80 ? 1 << 13 : 0)); // 8x8
+    e->attr2 = (uint16_t)(slot | (at & 0x20 ? 2 : 0) << 10 | (at & 3) << 12);
+}
+
+// One NES 8x16 sprite as one NDS 8x16 sprite (shape tall, size 0): its
+// vertical flip swaps and flips both tiles, as on the NES.
+static void add_tall_sprite(NdsScreen *s, NdsTileCache *obj, const VrasterLine *l, uint16_t top, int x, int y,
+                            uint8_t at)
+{
+    if (s->oam_count >= 128)
+        return;
+    uint16_t slot = cache_get_pair(obj, chr_key(l, top));
+    NdsOamEntry *e = &s->oam[s->oam_count++];
+    e->attr0 = (uint16_t)((y & 0xFF) | 2 << 14);
+    e->attr1 = (uint16_t)((x & 0x1FF) | (at & 0x40 ? 1 << 12 : 0) | (at & 0x80 ? 1 << 13 : 0));
     e->attr2 = (uint16_t)(slot | (at & 0x20 ? 2 : 0) << 10 | (at & 3) << 12);
 }
 
@@ -159,13 +201,22 @@ NDSFRAME_HOT void ndsScreenBuild(NdsScreen *s, NdsTileCache *bg, NdsTileCache *o
             s->obj_pal[p][c] = vnes->palette[16 + p * 4 + c] & 0x3F;
         }
 
-    // Sprites: NES OAM order is kept (lower index in front), 8x16 sprites
-    // become two 8x8 ones.
+    // Sprites: NES OAM order is kept (lower index in front), then the
+    // sprites a port added beyond the NES limit (vnes->oam_extra). 8x16
+    // sprites stay one NDS sprite each, so all 128 NDS sprites are usable.
     s->oam_count = 0;
     if (!s->obj_on)
         return;
-    for (int i = 0; i < 64; i++) {
-        const uint8_t *o = &vnes->oam[i * 4];
+    int tall = (top->ctrl & 0x20) != 0;
+    if (tall != obj->pairs) {
+        ndsTileCacheInit(obj);
+        obj->pairs = tall;
+    }
+    int total = 64 + vnes->oam_extra_count;
+    if (total > 128)
+        total = 128;
+    for (int i = 0; i < total; i++) {
+        const uint8_t *o = i < 64 ? &vnes->oam[i * 4] : &vnes->oam_extra[(i - 64) * 4];
         int y = o[0] + 1;
         if (y >= 240)
             continue;
@@ -174,16 +225,9 @@ NDSFRAME_HOT void ndsScreenBuild(NdsScreen *s, NdsTileCache *bg, NdsTileCache *o
         if (sy >= s->end || sy + 16 <= s->first)
             continue;
         uint8_t tile = o[1], at = o[2];
-        if (l->ctrl & 0x20) {
-            uint16_t base = (tile & 1) ? 0x1000 : 0;
-            uint16_t t0 = base + (tile & 0xFE) * 16, t1 = t0 + 16;
-            if (at & 0x80) {
-                uint16_t tmp = t0;
-                t0 = t1;
-                t1 = tmp;
-            }
-            add_sprite(s, obj, l, t0, o[3], sy, at);
-            add_sprite(s, obj, l, t1, o[3], sy + 8, at);
+        if (tall) {
+            // (A line that switched to 8x8 sprites mid frame is not followed.)
+            add_tall_sprite(s, obj, l, ((tile & 1) ? 0x1000 : 0) + (tile & 0xFE) * 16, o[3], sy, at);
         } else {
             add_sprite(s, obj, l, ((l->ctrl & 0x08) ? 0x1000 : 0) + tile * 16, o[3], sy, at);
         }
@@ -228,21 +272,23 @@ void ndsScreenCompose(const NdsScreen *s, const NdsTileCache *bg, const NdsTileC
             if (sy >= 192)
                 sy -= 256;
             int r = y - sy;
-            if (r < 0 || r >= 8)
+            int h = (e->attr0 >> 14) == 2 ? 16 : 8;
+            if (r < 0 || r >= h)
                 continue;
             int sx = e->attr1 & 0x1FF;
             if (sx >= 256)
                 sx -= 512;
-            uint16_t key = obj->key[e->attr2 & 0x3FF];
+            int ty = (e->attr1 & (1 << 13)) ? h - 1 - r : r;
+            uint16_t key = obj->key[(e->attr2 & 0x3FF) + (ty >> 3)];
             if (key == 0xFFFF)
                 continue;
+            ty &= 7;
             int behind = ((e->attr2 >> 10) & 3) == 2;
             for (int px = 0; px < 8; px++) {
                 int x = sx + px;
                 if (x < (s->left_obj ? 0 : 8) || x >= s->right)
                     continue;
                 int tx = (e->attr1 & (1 << 12)) ? 7 - px : px;
-                int ty = (e->attr1 & (1 << 13)) ? 7 - r : r;
                 int c = tile_pixel(chr4, key, tx, ty);
                 if (!c || (behind && bgc[x]))
                     continue;

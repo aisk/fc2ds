@@ -26,6 +26,10 @@ typedef struct {
     // Slots whose tile changed since the backend last uploaded them.
     uint16_t dirty[NDS_TILE_SLOTS];
     int dirty_count;
+    // Sprite cache for 8x16 sprites: slots go in pairs (even slot = top
+    // tile, the next one the bottom tile), so one NDS 8x16 sprite shows one
+    // NES sprite. Only the top tile's key is in slot_of.
+    int pairs;
 } NdsTileCache;
 
 void ndsTileCacheInit(NdsTileCache *c);
