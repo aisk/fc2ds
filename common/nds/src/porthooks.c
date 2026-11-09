@@ -11,6 +11,7 @@
 #include <stdlib.h>
 
 #include "nesref.h"
+#include "vnes.h"
 
 extern const PortHook *const __start_port_hooks[] __attribute__((weak));
 extern const PortHook *const __stop_port_hooks[] __attribute__((weak));
@@ -38,8 +39,14 @@ static void init(void)
     qsort(sorted, count, sizeof *sorted, by_addr);
 }
 
-// Run the hook of the routine at addr. NROM and fixed-bank games have one
-// hook per address; the bank of a hook is not checked.
+// The bank a hook needs at addr: banked games have hooks for several
+// pages at the same address (PORT_HOOK's bank, 8 KiB units, -1 = any).
+static int bank_matches(const PortHook *h, uint16_t addr)
+{
+    return h->bank < 0 || addr < 0x8000 || h->bank == vnesPrgBank((addr - 0x8000) >> 13);
+}
+
+// Run the hook of the routine at addr with the banks mapped now.
 void call6502(uint16_t addr)
 {
     if (!sorted)
@@ -47,15 +54,18 @@ void call6502(uint16_t addr)
     int lo = 0, hi = count - 1;
     while (lo <= hi) {
         int mid = (lo + hi) / 2;
-        if (sorted[mid]->addr == addr) {
-            cpu.pc = addr;
-            sorted[mid]->fn(&cpu);
-            return;
-        }
         if (sorted[mid]->addr < addr)
             lo = mid + 1;
         else
             hi = mid - 1;
+    }
+    // lo is the first hook at addr, if there is one.
+    for (int i = lo; i < count && sorted[i]->addr == addr; i++) {
+        if (bank_matches(sorted[i], addr)) {
+            cpu.pc = addr;
+            sorted[i]->fn(&cpu);
+            return;
+        }
     }
     // No hook: a routine the port did not cover. Stop here rather than
     // run on with wrong state.
