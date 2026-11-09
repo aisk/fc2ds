@@ -90,7 +90,7 @@ Contributions to the shared parts, such as more mappers, are welcome too.
 - [ ] Mapper: UxROM (mapper 2)
 - [ ] Mapper: CNROM (mapper 3)
 - [ ] CHR RAM games
-- [ ] Sound: DPCM channel
+- [x] Sound: DPCM channel
 - [ ] Sound: play pulse and noise on the NDS PSG channels (ARM7) instead of the ARM9 synth
 - [ ] Graphics: draw the column past the right edge instead of cropping 8 px
 - [ ] Graphics: steady alpha blending for sprites a game flickers for transparency

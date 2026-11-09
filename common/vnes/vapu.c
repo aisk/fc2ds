@@ -21,6 +21,23 @@ static const uint8_t duty_table[4] = { 0x02, 0x06, 0x1E, 0xF9 }; // bit n = step
 static const uint16_t noise_period[16] = {
     4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068,
 };
+static const uint16_t dmc_period[16] = {
+    428, 380, 340, 320, 286, 254, 226, 214, 190, 160, 142, 128, 106, 84, 72, 54,
+};
+
+// DMC sample playback: the memory reader fills a one byte buffer, the
+// output unit shifts its bits out, one per period, each moving the level
+// up or down by 2.
+typedef struct {
+    uint8_t loop, rate;
+    uint16_t start, length;      // from $4012/$4013
+    uint16_t addr, remaining;    // current sample read
+    uint8_t buffer, buffer_full;
+    uint8_t shift, bits, silent;
+    int32_t timer;
+} Dmc;
+
+static uint8_t (*dmc_read)(uint16_t addr);
 
 typedef struct {
     uint8_t start, loop, constant, volume; // volume = V (envelope period / constant volume)
@@ -55,7 +72,8 @@ static struct {
     int32_t hp_prev_in, hp_prev_out, lp;
     int16_t pulse_mix[31];
     int16_t tnd_mix[203];
-    uint8_t dmc_level; // $4011 direct load (no sample playback)
+    uint8_t dmc_level; // DMC output (0-127): $4011, then the samples
+    Dmc dmc;
 } apu VAPU_STATE;
 
 // Frame counter events in CPU cycles (NTSC), 4-step and 5-step mode: four
@@ -237,6 +255,19 @@ void vapuWrite(uint16_t addr, uint8_t v)
     if (r < 0 || r > 0x17)
         return;
     catch_up();
+    if (r == 0x10) {
+        apu.dmc.loop = (v >> 6) & 1;
+        apu.dmc.rate = v & 15;
+        return;
+    }
+    if (r == 0x12) {
+        apu.dmc.start = (uint16_t)(0xC000 + v * 64);
+        return;
+    }
+    if (r == 0x13) {
+        apu.dmc.length = (uint16_t)(v * 16 + 1);
+        return;
+    }
     if (r == 0x11) {
         // DMC output level, set directly: it adds to the triangle/noise
         // DAC, so it also changes their loudness (games write it for that).
@@ -308,6 +339,12 @@ void vapuWrite(uint16_t addr, uint8_t v)
             if (!apu.ch[i].enabled)
                 apu.ch[i].length = 0;
         }
+        if (!(v & 0x10)) {
+            apu.dmc.remaining = 0;
+        } else if (!apu.dmc.remaining) {
+            apu.dmc.addr = apu.dmc.start;
+            apu.dmc.remaining = apu.dmc.length;
+        }
         break;
     case 0x17:
         apu.five_step = v >> 7;
@@ -330,6 +367,8 @@ void vapuInit(int sample_rate)
     memset(&apu, 0, sizeof apu);
     apu.ch[3].lfsr = 1;
     apu.ch[3].period = noise_period[0];
+    apu.dmc.silent = 1;
+    apu.dmc.timer = dmc_period[0];
     apu.next_event = frame_events[0][0];
     apu.cycles_per_sample_fp = (uint32_t)(((uint64_t)VAPU_CPU_HZ << 16) / (uint32_t)sample_rate);
     // NES DAC curves (nesdev wiki "APU Mixer"), scaled so that the loudest
@@ -339,6 +378,47 @@ void vapuInit(int sample_rate)
     for (int i = 1; i < 203; i++)
         apu.tnd_mix[i] = (int16_t)(163.67 / (24329.0 / i + 100) * 28000);
     update();
+}
+
+void vapuSetMemory(uint8_t (*read)(uint16_t addr))
+{
+    dmc_read = read;
+}
+
+// Run the DMC for `cycles` CPU cycles.
+static void dmc_run(int cycles)
+{
+    Dmc *d = &apu.dmc;
+    d->timer -= cycles;
+    while (d->timer <= 0) {
+        d->timer += dmc_period[d->rate];
+        if (!d->silent) {
+            if (d->shift & 1) {
+                if (apu.dmc_level <= 125)
+                    apu.dmc_level += 2;
+            } else if (apu.dmc_level >= 2) {
+                apu.dmc_level -= 2;
+            }
+            d->shift >>= 1;
+        }
+        if (d->bits)
+            d->bits--;
+        if (!d->bits) {
+            d->bits = 8;
+            d->silent = !d->buffer_full;
+            d->shift = d->buffer;
+            d->buffer_full = 0;
+        }
+        if (!d->buffer_full && d->remaining) {
+            d->buffer = dmc_read ? dmc_read(d->addr) : 0x55; // 0x55: level stays
+            d->buffer_full = 1;
+            d->addr = d->addr == 0xFFFF ? 0x8000 : d->addr + 1;
+            if (!--d->remaining && d->loop) {
+                d->addr = d->start;
+                d->remaining = d->length;
+            }
+        }
+    }
 }
 
 static const uint8_t triangle_wave[32] = {
@@ -381,6 +461,9 @@ VAPU_HOT void vapuRender(int16_t *out, int samples)
             n->lfsr = (uint16_t)lfsr;
             n->level = (lfsr & 1) ? 0 : n->vol;
         }
+
+        if (apu.dmc.remaining || apu.dmc.buffer_full || !apu.dmc.silent)
+            dmc_run(cycles);
 
         int32_t x = apu.pulse_mix[p1->level + p2->level] + apu.tnd_mix[3 * triangle_wave[t->step] + 2 * n->level + apu.dmc_level];
 

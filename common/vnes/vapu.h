@@ -1,8 +1,8 @@
 // 2A03 APU synthesizer: pulse 1/2, triangle and noise with envelopes,
 // sweep, length and linear counters and the frame counter, mixed with the
-// NES's non-linear DAC curves, plus the DMC level written to $4011. DPCM
-// sample playback is not implemented yet (no ported game uses it so far).
-// Platform neutral C, integer only after vapuInit.
+// NES's non-linear DAC curves, and the DMC: the level written to $4011 and
+// DPCM sample playback (read through vapuSetMemory). The DMC IRQ is not
+// modelled. Platform neutral C, integer only after vapuInit.
 //
 // The caller decides timing: vapuWrite applies a register write at once,
 // vapuRender produces the next samples. Both nesref --wav and the NDS render
@@ -17,3 +17,6 @@
 void vapuInit(int sample_rate);
 void vapuWrite(uint16_t addr, uint8_t value); // $4000-$4017
 void vapuRender(int16_t *out, int samples);
+// CPU bus reads for the DMC's samples ($8000-$FFFF), e.g. vnesRead. Without
+// it, samples play as silence.
+void vapuSetMemory(uint8_t (*read)(uint16_t addr));

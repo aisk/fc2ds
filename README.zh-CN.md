@@ -54,7 +54,7 @@ NDS 每块屏幕横向 256 像素，和 FC 一样，纵向 192 行，比 FC 在�
 - [ ] Mapper：UxROM（mapper 2）
 - [ ] Mapper：CNROM（mapper 3）
 - [ ] 支持使用 CHR RAM 的游戏
-- [ ] 声音：DPCM 通道
+- [x] 声音：DPCM 通道
 - [ ] 声音：方波和噪音改用 NDS 自带的 PSG 通道（ARM7）发声，不再占用 ARM9 做软件合成
 - [ ] 画面：把屏幕右边缘外的那一列补画出来，不再裁掉 8 px
 - [ ] 画面：有些游戏靠精灵闪烁来做半透明，改成稳定的 alpha 混合

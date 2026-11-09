@@ -29,6 +29,7 @@ static void sound_init(void)
 {
     mmInitNoSoundbank();
     vapuInit(SOUND_RATE);
+    vapuSetMemory(vnesRead); // DPCM samples
     vnes->apu_write = vapuWrite;
     mm_stream stream = {
         .sampling_rate = SOUND_RATE,

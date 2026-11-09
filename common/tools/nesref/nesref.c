@@ -788,6 +788,7 @@ int main(int argc, char **argv)
     }
     if (wav) {
         vapuInit(WAV_RATE);
+        vapuSetMemory(vnesRead);
         machines[0].nes.apu_write = vapuWrite;
     }
 
