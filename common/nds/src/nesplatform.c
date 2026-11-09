@@ -46,10 +46,10 @@ void nesPlatformRun(const NesPlatform *p)
     platform = *p;
     vnesInit(&nes, p->prg, p->prg_size, p->chr, p->chr_size);
     nes.mapper = p->mapper;
-    if (p->mapper == VNES_NROM)
+    if (p->mapper != VNES_MMC3)
         nes.mirroring = p->mirroring;
     vnes = &nes;
-    ndsVideoInit(p->chr, p->chr_size);
+    ndsVideoInit(nes.chr, nes.chr_size); // CHR RAM: the Vnes's own
     sound_init();
     if (p->init)
         p->init();

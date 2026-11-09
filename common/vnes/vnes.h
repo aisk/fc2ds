@@ -1,4 +1,4 @@
-// Virtual NES system state without a CPU: RAM, mapper (MMC3 or NROM), PPU
+// Virtual NES system state without a CPU: RAM, mapper (MMC3, NROM or UxROM), PPU
 // memory and registers, joypad. Ported game code reads and writes the NES through this,
 // so it runs unchanged on the host reference runner (common/tools/nesref) and
 // on the NDS, where a renderer turns the PPU state into NDS graphics.
@@ -27,14 +27,15 @@ typedef struct {
 #define VNES_RASTER_EVENTS 512
 
 // Mappers. MMC3 is 0 so that a zeroed Vnes or NesPlatform means MMC3.
-enum { VNES_MMC3 = 0, VNES_NROM = 1 };
+enum { VNES_MMC3 = 0, VNES_NROM = 1, VNES_UXROM = 2 };
 
 typedef struct Vnes {
     const uint8_t *prg, *chr;
     int prg_size, chr_size;
     uint8_t ram[0x800];
     uint8_t prg_ram[0x2000];
-    uint8_t mapper;   // VNES_MMC3 or VNES_NROM (set after vnesInit)
+    uint8_t mapper;   // VNES_MMC3, VNES_NROM or VNES_UXROM (set after vnesInit)
+    uint8_t prg_page; // UxROM: 16 KiB page at $8000
 
     // MMC3 (mirroring: 0 vertical, 1 horizontal; NROM uses it too, from the
     // iNES header)
@@ -43,6 +44,12 @@ typedef struct Vnes {
 
     // PPU
     uint8_t ctrl, mask, status, oam_addr;
+    // CHR RAM, for games without CHR ROM (vnesInit with chr_size 0): chr
+    // then points here, and each written tile is marked in chr_dirty (one
+    // bit per 16 byte tile) until a renderer takes it (vnesChrTakeDirty).
+    uint8_t chr_ram[0x2000];
+    uint8_t chr_is_ram;
+    uint32_t chr_dirty[0x2000 / 16 / 32];
     uint8_t vram[0x1000], palette[32], oam[256];
     uint16_t v, t;
     uint8_t x, w, read_buffer;
@@ -75,6 +82,8 @@ typedef struct Vnes {
 extern Vnes *vnes;
 #define nes_ram (vnes->ram)
 
+// chr_size 0: the cartridge has 8 KiB of CHR RAM. The Vnes then points to
+// itself, so do not copy it afterwards.
 void vnesInit(Vnes *n, const uint8_t *prg, int prg_size, const uint8_t *chr, int chr_size);
 
 // CPU bus.
@@ -86,6 +95,10 @@ uint8_t vnesPpuRead(uint16_t addr);
 uint16_t vnesNametableIndex(uint16_t addr); // $2000-$2FFF -> vram index
 int vnesPrgBank(int slot);                  // 8 KiB bank mapped at $8000 + slot * $2000
 int vnesChrOffset(uint16_t addr);           // byte offset in CHR for a pattern address
+
+// CHR RAM tiles written since the last call: sets one bit per tile in
+// `out` (512 bits) and clears them. Returns 0 when none changed.
+int vnesChrTakeDirty(uint32_t out[16]);
 
 // Copy the raster registers as they are now.
 void vnesRasterSave(VnesRaster *r);

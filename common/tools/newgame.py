@@ -18,7 +18,7 @@ import nesrom
 ROOT = Path(__file__).resolve().parents[2]
 TEMPLATE = ROOT / "common" / "template"
 # Mappers the shared NES layer (common/vnes, nesref) can run today.
-SUPPORTED = {0: "NROM", 4: "MMC3"}
+SUPPORTED = {0: "NROM", 2: "UxROM", 4: "MMC3"}
 
 
 def layout_guess(rom: nesrom.NesRom) -> str:
@@ -49,8 +49,8 @@ def main() -> None:
         sys.exit(f"{dest} already exists")
     rom = nesrom.load(args.rom)
     if not rom.chr:
-        print("warning: CHR RAM game (no CHR ROM): the CHR viewer shows nothing and "
-              "common/vnes needs CHR RAM support before phase 4", file=sys.stderr)
+        print("note: CHR RAM game (no CHR ROM): the CHR viewer shows nothing until the game has "
+              "written its tiles (common/vnes keeps the CHR RAM)", file=sys.stderr)
     if rom.mapper not in SUPPORTED:
         print(f"warning: mapper {rom.mapper} ({rom.mapper_name}) is not supported by common/vnes "
               f"and nesref yet (only {', '.join(SUPPORTED.values())}); add it before phase 4",

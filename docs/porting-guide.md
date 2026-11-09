@@ -9,9 +9,9 @@ Each phase lists what it produces and when it is done. The game's `README.md` ke
 - Toolchain: `docs/setup.md` (BlocksDS in WSL, cc65, Python 3 with Pillow and PyYAML). Build in a login shell (`bash -lc make`) so the BlocksDS variables are set.
 - ROMs live in `roms/` and are never committed, nor is anything generated from them (disassembly listings, dumped text, extracted graphics). Only hand-written knowledge is committed: layouts, names, notes, ported code, translations.
 - What the shared layer supports today (extend it first if the game needs more):
-  - Mappers: MMC3 and NROM, in `common/vnes` (the virtual NES) and `common/tools/nesref` (the reference runner). UxROM, CNROM, MMC1 are small additions there.
+  - Mappers: MMC3, NROM and UxROM (with its bus conflict), in `common/vnes` (the virtual NES) and `common/tools/nesref` (the reference runner). CNROM, MMC1 are small additions there.
   - The sprite 0 hit is modelled (from the OAM and the scroll at the start of the frame), so a status bar split that polls PPUSTATUS works.
-  - CHR ROM only (no CHR RAM yet).
+  - CHR ROM or 8 KiB of CHR RAM. With CHR RAM the comparison includes its contents, and the NDS renderer converts the tiles the game writes again each frame.
   - The disassembly tracer models PRG as one fixed segment plus pages that switch in one window.
   - NTSC timing; no DPCM sample playback in the synthesizer (the $4011 direct level is mixed).
 

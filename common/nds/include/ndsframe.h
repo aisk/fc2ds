@@ -29,6 +29,8 @@ typedef struct {
 } NdsTileCache;
 
 void ndsTileCacheInit(NdsTileCache *c);
+// NES tile `key` changed (CHR RAM): upload it again if it is loaded.
+void ndsTileCacheInvalidate(NdsTileCache *c, uint16_t key);
 
 typedef struct {
     uint16_t attr0, attr1, attr2;

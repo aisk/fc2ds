@@ -31,15 +31,24 @@ void vnesInit(Vnes *n, const uint8_t *prg, int prg_size, const uint8_t *chr, int
     n->prg_size = prg_size;
     n->chr = chr;
     n->chr_size = chr_size;
+    if (!chr_size) {
+        n->chr = n->chr_ram;
+        n->chr_size = sizeof n->chr_ram;
+        n->chr_is_ram = 1;
+    }
     n->dots_per_line = 341;
     n->sprite0_line = -1;
 }
 
-// MMC3 PRG mode 0 or 1 (bit 6 of bank select); NROM maps 16 or 32 KiB.
+// MMC3 PRG mode 0 or 1 (bit 6 of bank select); NROM maps 16 or 32 KiB;
+// UxROM a 16 KiB page at $8000 and the last one at $C000.
 int vnesPrgBank(int slot)
 {
     if (vnes->mapper == VNES_NROM)
         return slot % (vnes->prg_size / 0x2000);
+    if (vnes->mapper == VNES_UXROM)
+        return slot < 2 ? (vnes->prg_page * 2 + slot) % (vnes->prg_size / 0x2000)
+                        : vnes->prg_size / 0x2000 - 4 + slot;
     int last = vnes->prg_size / 0x2000 - 1;
     int swap = vnes->bank_select & 0x40;
     switch (slot) {
@@ -52,7 +61,7 @@ int vnesPrgBank(int slot)
 
 int vnesChrOffset(uint16_t a)
 {
-    if (vnes->mapper == VNES_NROM)
+    if (vnes->mapper != VNES_MMC3)
         return a % vnes->chr_size;
     int inv = (vnes->bank_select & 0x80) ? 0x1000 : 0;
     a ^= inv;
@@ -88,8 +97,13 @@ uint8_t vnesPpuRead(uint16_t a)
 static void ppu_mem_write(uint16_t a, uint8_t v)
 {
     a &= 0x3FFF;
-    if (a < 0x2000)
-        return; // CHR ROM
+    if (a < 0x2000) {
+        if (vnes->chr_is_ram) {
+            vnes->chr_ram[a] = v;
+            vnes->chr_dirty[a >> 9] |= 1u << ((a >> 4) & 31);
+        }
+        return;
+    }
     if (a < 0x3F00) {
         vnes->vram[vnesNametableIndex(a)] = v;
         return;
@@ -142,6 +156,17 @@ uint8_t vnesRead(uint16_t a)
         return vnes->prg_ram[a & 0x1FFF];
     int slot = (a - 0x8000) >> 13;
     return vnes->prg[(vnesPrgBank(slot) * 0x2000 + (a & 0x1FFF)) % vnes->prg_size];
+}
+
+int vnesChrTakeDirty(uint32_t out[16])
+{
+    int any = 0;
+    for (int i = 0; i < 16; i++) {
+        out[i] = vnes->chr_dirty[i];
+        any |= out[i] != 0;
+        vnes->chr_dirty[i] = 0;
+    }
+    return any;
 }
 
 void vnesRasterSave(VnesRaster *r)
@@ -226,6 +251,11 @@ void vnesWrite(uint16_t a, uint8_t v)
         return;
     if (a < 0x8000) {
         vnes->prg_ram[a & 0x1FFF] = v;
+        return;
+    }
+    if (vnes->mapper == VNES_UXROM) {
+        // Bus conflict: the ROM byte at the address is driven too.
+        vnes->prg_page = v & vnesRead(a);
         return;
     }
     if (vnes->mapper != VNES_MMC3)

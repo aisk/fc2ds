@@ -25,6 +25,7 @@ typedef struct {
 
 static Engine engines[2];
 static uint32_t *chr4;
+static const uint8_t *chr_src;
 
 static void engine_init(Engine *e, int sub)
 {
@@ -68,6 +69,7 @@ static void vblank(void)
 void ndsVideoInit(const uint8_t *chr, int chr_size)
 {
     chr4 = malloc((size_t)chr_size * 2);
+    chr_src = chr;
     nesChrTo4bpp(chr, chr4, chr_size / 16);
 
     videoSetMode(MODE_0_2D | DISPLAY_BG0_ACTIVE | DISPLAY_SPR_ACTIVE | DISPLAY_SPR_1D | DISPLAY_WIN0_ON | DISPLAY_WIN1_ON);
@@ -89,9 +91,29 @@ void ndsVideoInit(const uint8_t *chr, int chr_size)
     irqEnable(IRQ_VBLANK);
 }
 
+// CHR RAM: convert the tiles the game wrote since the last frame again,
+// and upload them again where they are loaded.
+static void update_chr_ram(void)
+{
+    uint32_t dirty[16];
+    if (!vnes->chr_is_ram || !vnesChrTakeDirty(dirty))
+        return;
+    for (int w = 0; w < 16; w++) {
+        for (uint32_t bits = dirty[w]; bits; bits &= bits - 1) {
+            uint16_t tile = (uint16_t)(w * 32 + __builtin_ctz(bits));
+            nesChrTo4bpp(chr_src + tile * NES_TILE_BYTES, chr4 + tile * NDS_TILE4_WORDS, 1);
+            for (int e = 0; e < 2; e++) {
+                ndsTileCacheInvalidate(&engines[e].bg_cache, tile);
+                ndsTileCacheInvalidate(&engines[e].obj_cache, tile);
+            }
+        }
+    }
+}
+
 void ndsVideoBuild(const VrasterFrame *f, const NdsLayout *lay)
 {
     Engine *top = &engines[0], *bot = &engines[1];
+    update_chr_ram();
     ndsScreenBuild(&top->screen, &top->bg_cache, &top->obj_cache, f, lay->top_first, lay->top_end, 0, 1);
     top->screen.right = 256 - lay->top_crop_right;
     top->has_frame = 1;

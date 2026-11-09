@@ -21,6 +21,13 @@ void ndsTileCacheInit(NdsTileCache *c)
     c->dirty_count = 0;
 }
 
+void ndsTileCacheInvalidate(NdsTileCache *c, uint16_t key)
+{
+    uint16_t s = c->slot_of[key];
+    if (s != 0xFFFF && c->dirty_count < NDS_TILE_SLOTS)
+        c->dirty[c->dirty_count++] = s;
+}
+
 // Slot for NES CHR tile `key`, loading it into a slot not used in this
 // frame if needed.
 static inline uint16_t cache_get(NdsTileCache *c, uint16_t key)

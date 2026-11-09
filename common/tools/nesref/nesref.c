@@ -1,4 +1,4 @@
-// Headless reference runner for MMC3 and NROM NES games.
+// Headless reference runner for MMC3, NROM and UxROM NES games.
 //
 // Runs the original ROM with scripted input and stops at a given PC once per
 // main loop pass ("tick"). There is no picture or sound: common/vnes keeps
@@ -474,8 +474,9 @@ static void write_nds_ppm(const char *path)
     static NdsTileCache bg, obj, bg2, obj2;
     static uint32_t *chr4;
     static uint8_t pix[2][192][256];
-    if (!chr4) {
-        chr4 = malloc((size_t)vnes->chr_size * 2);
+    if (!chr4 || vnes->chr_is_ram) {
+        if (!chr4)
+            chr4 = malloc((size_t)vnes->chr_size * 2);
         nesChrTo4bpp(vnes->chr, chr4, vnes->chr_size / 16);
     }
     ndsTileCacheInit(&bg);
@@ -569,6 +570,8 @@ static int compare_tick(long tick)
         { "mmc3 select", &p->bank_select, &q->bank_select, 1 },
         { "mirroring", &p->mirroring, &q->mirroring, 1 },
         { "irq latch", &p->irq_latch, &q->irq_latch, 1 },
+        { "prg page", &p->prg_page, &q->prg_page, 1 },
+        { "chr ram", p->chr_ram, q->chr_ram, p->chr_is_ram ? (int)sizeof p->chr_ram : 0 },
         { "irq enabled", &p->irq_enabled, &q->irq_enabled, 1 },
         { "ppuctrl", &p->ctrl, &q->ctrl, 1 },
         { "ppumask", &p->mask, &q->mask, 1 },
@@ -734,8 +737,8 @@ int main(int argc, char **argv)
         return 1;
     }
     int mapper = (header[6] >> 4) | (header[7] & 0xF0);
-    if (mapper != 4 && mapper != 0) {
-        fprintf(stderr, "nesref: mapper %d, only MMC3 (4) and NROM (0) are supported\n", mapper);
+    if (mapper != 4 && mapper != 0 && mapper != 2) {
+        fprintf(stderr, "nesref: mapper %d, only MMC3 (4), NROM (0) and UxROM (2) are supported\n", mapper);
         return 1;
     }
     if (header[6] & 4)
@@ -775,8 +778,8 @@ int main(int argc, char **argv)
         Machine *m = &machines[i];
         use_machine(m);
         vnesInit(&m->nes, prg, prg_size, chr, chr_size);
-        if (mapper == 0) {
-            m->nes.mapper = VNES_NROM;
+        if (mapper != 4) {
+            m->nes.mapper = mapper == 2 ? VNES_UXROM : VNES_NROM;
             m->nes.mirroring = header[6] & 1 ? 0 : 1; // iNES bit 0: vertical
         }
         m->nes.dots_per_line = 341L * speed;
