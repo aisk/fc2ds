@@ -10,6 +10,10 @@ names_from = ["../ram.md"]
 
 # Extra entry points the tracer cannot find: { seg, addr, ctx (page mapped) }
 entry = []
+# Markdown files whose seg:XXXX rows are all entry points (for example the
+# routines of an existing disassembly), and rows of them to leave out.
+# entries_from = ["../notes/routines.md"]
+# entries_skip = ["page0:8000"]
 
 # Code pointer tables not reached through a dispatcher: { seg, addr, count, ctx }
 table = []
@@ -19,8 +23,11 @@ sha1 = "@SHA1@"
 
 [layout]
 @LAYOUT@
-bank_switch = 0x0000  # TODO: routine that maps a page (A = page number)
+bank_switch = 0x0000  # TODO: routine(s) that map a page, one address or a list
+# bank_switch_reg = "y"  # register that holds the page number (default "a")
+# bank_calls = [{ addr = 0xC000, page = 1 }]  # routines that always map one page
 dispatchers = []      # TODO: "jsr Dispatch / .word ..." style jump table routines
+# taken = ["fixed:C000"]  # branches that are always taken (data follows them)
 
 # Indirect jumps whose targets are covered by the tables above: "seg:ADDR" = "why"
 [indirect]

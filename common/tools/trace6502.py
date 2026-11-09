@@ -110,8 +110,11 @@ class Layout:
     fixed: Segment
     pages: list[Segment]
     window: tuple[int, int]
-    bank_switch: int
+    bank_switch: set[int]
     dispatchers: set[int]
+    bank_reg: str = "a"  # register that holds the page number for bank_switch
+    bank_calls: dict[int, int] = field(default_factory=dict)  # routine -> page it maps
+    taken: set[str] = field(default_factory=set)  # "seg:ADDR" branches that are always taken
 
     def resolve(self, addr: int, cur: Segment, ctx: int | None) -> Segment | None:
         """Which segment an absolute address lands in, given the current page."""
@@ -139,7 +142,11 @@ def load_layout(cfg: dict, rom: nesrom.NesRom) -> Layout:
     for s in pages + [fixed]:
         s.data = rom.prg[s.prg:s.prg + s.size]
         s.kind = bytearray(s.size)
-    return Layout(fixed, pages, (win, win + psize), lay["bank_switch"], set(lay.get("dispatchers", [])))
+    bs = lay["bank_switch"]
+    bs = set(bs) if isinstance(bs, list) else {bs}
+    calls = {c["addr"]: c["page"] for c in lay.get("bank_calls", [])}
+    return Layout(fixed, pages, (win, win + psize), bs, set(lay.get("dispatchers", [])),
+                  lay.get("bank_switch_reg", "a"), calls, set(lay.get("taken", [])))
 
 
 def plausible_code(seg: Segment, addr: int, steps: int = 8) -> bool:
@@ -324,6 +331,7 @@ class Tracer:
         lay = self.lay
         imm_store: dict[int, int] = {}
         flags: dict[str, bool] = {}
+        xy: dict[str, int | None] = {"x": None, "y": None}  # constants in X and Y
         entry = addr
         while True:
             key = (seg.name, addr, ctx)
@@ -384,14 +392,15 @@ class Tracer:
                 # A flag set by the previous instruction ("ldx #4 / bne",
                 # "clc / bcc") makes some branches unconditional.
                 cond = BRANCH_COND.get(mnem)
-                if cond and cond[0] in flags and flags[cond[0]] == cond[1]:
+                if f"{seg.name}:{addr:04X}" in lay.taken or (
+                        cond and cond[0] in flags and flags[cond[0]] == cond[1]):
                     self.decided.add((seg.name, addr))
                     return
             elif mnem == "jmp" and mode == "ind":
                 self.indirect.append(f"{seg.name}:{addr:04X} jmp (${operand:04X})")
                 return
             elif mnem == "jmp":
-                if operand == lay.bank_switch:
+                if operand in lay.bank_switch:
                     return
                 self.target(operand, seg, ctx, addr, "L")
                 return
@@ -400,14 +409,18 @@ class Tracer:
                     count = self.table_len.get((seg.name, nxt))
                     self.word_table(seg, nxt, ctx, addr, count)
                     return
-                if operand == lay.bank_switch:
-                    if a is not None and seg.page is None:
-                        ctx = a
+                if operand in lay.bank_switch:
+                    page = a if lay.bank_reg == "a" else xy[lay.bank_reg]
+                    if page is not None and seg.page is None:
+                        ctx = page
                     elif seg.page is None:
                         ctx = None
                 else:
                     self.target(operand, seg, ctx, addr, "S")
+                    if operand in lay.bank_calls and seg.page is None:
+                        ctx = lay.bank_calls[operand]
                 a = None
+                xy = {"x": None, "y": None}
             elif mnem == "lda" and mode == "imm":
                 a = operand
             elif mnem == "sta" and a is not None and mode in ("zp", "zpx", "abs", "abx", "aby"):
@@ -426,6 +439,12 @@ class Tracer:
                         self.pending.add((t.name, dest, ctx))
             elif mnem in A_WRITERS or (mode == "acc"):
                 a = None
+            if mnem in ("ldx", "ldy"):
+                xy[mnem[2]] = operand if mode == "imm" else None
+            elif mnem in ("tax", "inx", "dex", "tsx"):
+                xy["x"] = None
+            elif mnem in ("tay", "iny", "dey"):
+                xy["y"] = None
             flags = imm_flags(mnem, mode, operand)
             addr = nxt
 
@@ -674,6 +693,15 @@ def trace(cfg: dict, rom: nesrom.NesRom, table_len: dict) -> tuple[Layout, Trace
 
     for e in cfg.get("entry", []):
         tr.push(segs[e["seg"]], e["addr"], e.get("ctx"), "S")
+    # Routine tables from an existing disassembly: every row is an entry.
+    for md in cfg.get("entries_from", []):
+        _, labels = names_from_markdown(Path(cfg["_dir"]) / md)
+        skip = set(cfg.get("entries_skip", []))
+        for sname, items in labels.items():
+            for addr in items:
+                if f"{sname}:{addr:04X}" in skip:
+                    continue
+                tr.push(segs[sname], addr, None, "S")
     tr.run()
     for t in cfg.get("table", []):
         seg = segs[t["seg"]]
@@ -693,6 +721,7 @@ def main() -> None:
     args = ap.parse_args()
 
     cfg = tomllib.loads(Path(args.config).read_text())
+    cfg["_dir"] = str(Path(args.config).parent)
     rom = nesrom.load(args.rom)
     if "sha1" in cfg.get("rom", {}) and rom.sha1 != cfg["rom"]["sha1"]:
         raise SystemExit(f"{args.rom}: SHA-1 does not match config")
