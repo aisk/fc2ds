@@ -25,6 +25,8 @@
 //                    --compare since hooks take no CPU time)
 //   --compare        run ref and port and compare RAM every tick
 //   --ignore A-B     RAM range left out of the comparison (repeatable)
+//   --ignore-oam     leave PPU OAM out of the comparison (to check a sprite
+//                    enhancement changes nothing else)
 //   --out FILE       binary RAM dump: per tick u32 tick, u32 frame, RAM[0x800]
 //   --ppu FILE       write the PPU memory at the end (nametables 4K,
 //                    palette 32, OAM 256, MMC3 R0-R7)
@@ -55,6 +57,8 @@
 //                    common/vnes/vapu (one NES frame of samples per frame,
 //                    register writes applied as they happen) into a 16-bit
 //                    mono WAV at the NDS stream rate
+//   --dmc-reversed   with --wav: DPCM sample bytes with their bits reversed
+//                    (vapuSetDmcReversed)
 //   --trace          print every instruction (slow)
 //
 // The pad is applied per tick, not per frame, so lag frames in the original
@@ -425,6 +429,7 @@ typedef struct {
     int lo, hi;
 } Range;
 
+static int ignore_oam;
 static Range ignore[16];
 static int ignore_count;
 static long max_ticks = -1;
@@ -565,7 +570,7 @@ static int compare_tick(long tick)
     } areas[] = {
         { "vram", p->vram, q->vram, sizeof p->vram },
         { "palette", p->palette, q->palette, sizeof p->palette },
-        { "oam", p->oam, q->oam, sizeof p->oam },
+        { "oam", p->oam, q->oam, ignore_oam ? 0 : (int)sizeof p->oam },
         { "mmc3 R", p->regs, q->regs, sizeof p->regs },
         { "mmc3 select", &p->bank_select, &q->bank_select, 1 },
         { "mirroring", &p->mirroring, &q->mirroring, 1 },
@@ -705,6 +710,10 @@ int main(int argc, char **argv)
             shots[shot_count++].prefix = *end == ':' ? end + 1 : "shot";
         } else if (!strcmp(argv[i], "--pcs") && i + 1 < argc)
             pcs_out = argv[++i];
+        else if (!strcmp(argv[i], "--ignore-oam"))
+            ignore_oam = 1;
+        else if (!strcmp(argv[i], "--dmc-reversed"))
+            vapuSetDmcReversed(1);
         else if (!strcmp(argv[i], "--wav") && i + 1 < argc) {
             if (!(wav = fopen(argv[++i], "wb"))) {
                 perror(argv[i]);

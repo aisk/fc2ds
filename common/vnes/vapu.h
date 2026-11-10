@@ -20,3 +20,7 @@ void vapuRender(int16_t *out, int samples);
 // CPU bus reads for the DMC's samples ($8000-$FFFF), e.g. vnesRead. Without
 // it, samples play as silence.
 void vapuSetMemory(uint8_t (*read)(uint16_t addr));
+// Play every sample byte with its bits in the opposite order (an
+// enhancement for games whose samples were encoded with the bits
+// reversed, a common mistake of the time). Off by default.
+void vapuSetDmcReversed(int on);

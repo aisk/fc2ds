@@ -385,6 +385,20 @@ void vapuSetMemory(uint8_t (*read)(uint16_t addr))
     dmc_read = read;
 }
 
+static uint8_t dmc_reversed;
+
+void vapuSetDmcReversed(int on)
+{
+    dmc_reversed = on != 0;
+}
+
+static uint8_t reverse_bits(uint8_t b)
+{
+    b = (uint8_t)((b & 0xF0) >> 4 | (b & 0x0F) << 4);
+    b = (uint8_t)((b & 0xCC) >> 2 | (b & 0x33) << 2);
+    return (uint8_t)((b & 0xAA) >> 1 | (b & 0x55) << 1);
+}
+
 // Run the DMC for `cycles` CPU cycles.
 static void dmc_run(int cycles)
 {
@@ -406,7 +420,7 @@ static void dmc_run(int cycles)
         if (!d->bits) {
             d->bits = 8;
             d->silent = !d->buffer_full;
-            d->shift = d->buffer;
+            d->shift = dmc_reversed ? reverse_bits(d->buffer) : d->buffer;
             d->buffer_full = 0;
         }
         if (!d->buffer_full && d->remaining) {
