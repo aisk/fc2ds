@@ -263,8 +263,8 @@ class Tracer:
                 self.unresolved.append(f"{seg.name}:{lo + i:04X} table entry -> ${w:04X}")
             else:
                 self.push(t, w, ctx, "J", f"{seg.name}:{lo + i:04X} (table)")
-            seg.kind[lo + i - seg.base] = 2
-            seg.kind[hi + i - seg.base] = 2
+            seg.kind[lo + i - seg.base] = 3  # byte tables
+            seg.kind[hi + i - seg.base] = 3
         self.tables[seg.name].append((lo, lo + count - 1))
         self.tables[seg.name].append((hi, hi + count - 1))
 
@@ -374,7 +374,7 @@ class Tracer:
                 self.err(seg, entry, f"{seg.name}: execution runs off segment at ${addr:04X}")
                 return
             off = addr - seg.base
-            if seg.kind[off] == 2:
+            if seg.kind[off] in (2, 3):
                 for start, end in self.tables[seg.name]:
                     if start <= addr <= end and (seg.name, start) in self.auto_tables:
                         # A guessed table ate real code: shorten it next pass.
@@ -553,6 +553,8 @@ def write_info(seg: Segment, lay: Layout, names, ram: dict[int, tuple[str, str, 
             lines.append(f"RANGE {{ START ${s:04X}; END ${e:04X}; TYPE CODE; }};")
         elif k == 2:
             lines.append(f"RANGE {{ START ${s:04X}; END ${e:04X}; TYPE ADDRTABLE; }};")
+        elif k == 3:
+            lines.append(f"RANGE {{ START ${s:04X}; END ${e:04X}; TYPE BYTETABLE; }};")
         else:
             lines.append(f"RANGE {{ START ${s:04X}; END ${e:04X}; TYPE BYTETABLE; }};")
     del table_ranges
@@ -795,7 +797,7 @@ def main() -> None:
     report = ["# Trace report", ""]
     for s in lay.segments():
         code = sum(1 for k in s.kind if k == 1)
-        tab = sum(1 for k in s.kind if k == 2)
+        tab = sum(1 for k in s.kind if k in (2, 3))
         report.append(f"{s.name:6s} ${s.base:04X}  code {code * 100 // s.size:3d}%  "
                       f"tables {tab:5d} bytes  entries {len(s.entries)}")
     known = cfg.get("indirect", {})
