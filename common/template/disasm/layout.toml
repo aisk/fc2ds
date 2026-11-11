@@ -16,6 +16,7 @@ entry = []
 # entries_skip = ["page0:8000"]
 
 # Code pointer tables not reached through a dispatcher: { seg, addr, count, ctx }
+# (separate low and high byte tables: addr is the low one, plus hi and count)
 table = []
 
 [rom]
@@ -28,8 +29,11 @@ bank_switch = 0x0000  # TODO: routine(s) that map a page, one address or a list
 # bank_calls = [{ addr = 0xC000, page = 1 }]  # routines that always map one page
 dispatchers = []      # TODO: "jsr Dispatch / .word ..." style jump table routines
 # taken = ["fixed:C000"]  # branches that are always taken (data follows them)
+# inline_args = { "fixed:C000" = 2 }  # routines that skip data bytes after their jsr
+# traps = [0x80]  # illegal opcodes the game runs on purpose to stop (debug traps)
 
-# Indirect jumps whose targets are covered by the tables above: "seg:ADDR" = "why"
+# Indirect jumps whose targets are covered by the tables above, and jumps into
+# RAM (code the game writes there): "seg:ADDR" = "why"
 [indirect]
 
 # Override inline jump table lengths: "seg:ADDR" = entries

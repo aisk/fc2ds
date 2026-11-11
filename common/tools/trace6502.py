@@ -115,6 +115,8 @@ class Layout:
     bank_reg: str = "a"  # register that holds the page number for bank_switch
     bank_calls: dict[int, int] = field(default_factory=dict)  # routine -> page it maps
     taken: set[str] = field(default_factory=set)  # "seg:ADDR" branches that are always taken
+    traps: set[int] = field(default_factory=set)  # opcodes that stop the CPU on purpose (debug traps)
+    inline_args: dict[str, int] = field(default_factory=dict)  # "seg:ADDR" routine -> bytes after its jsr
 
     def resolve(self, addr: int, cur: Segment, ctx: int | None) -> Segment | None:
         """Which segment an absolute address lands in, given the current page."""
@@ -146,7 +148,8 @@ def load_layout(cfg: dict, rom: nesrom.NesRom) -> Layout:
     bs = set(bs) if isinstance(bs, list) else {bs}
     calls = {c["addr"]: c["page"] for c in lay.get("bank_calls", [])}
     return Layout(fixed, pages, (win, win + psize), bs, set(lay.get("dispatchers", [])),
-                  lay.get("bank_switch_reg", "a"), calls, set(lay.get("taken", [])))
+                  lay.get("bank_switch_reg", "a"), calls, set(lay.get("taken", [])),
+                  set(lay.get("traps", [])), dict(lay.get("inline_args", {})))
 
 
 def plausible_code(seg: Segment, addr: int, steps: int = 8) -> bool:
@@ -235,7 +238,9 @@ class Tracer:
                 break
             w = seg.byte(pos) | (seg.byte(pos + 1) << 8)
             t = self.lay.resolve(w, seg, ctx)
-            if t is None or not t.has(w) or (count is None and not plausible_code(t, w)):
+            if w == 0 and count is not None:
+                pass  # no handler for this index
+            elif t is None or not t.has(w) or (count is None and not plausible_code(t, w)):
                 if count is None:
                     break
                 self.unresolved.append(f"{seg.name}:{pos:04X} table entry -> ${w:04X}")
@@ -249,8 +254,27 @@ class Tracer:
             n += 1
         self.tables[seg.name].append((start, pos - 1))
 
-    def table_of_tables(self, seg: Segment, start: int, ctx: int | None, count: int | None) -> None:
-        """An outer table of pointers to inner code pointer tables."""
+    def split_table(self, seg: Segment, lo: int, hi: int, count: int, ctx: int | None) -> None:
+        """Decode `count` code pointers kept as separate low and high byte tables."""
+        for i in range(count):
+            w = seg.byte(lo + i) | (seg.byte(hi + i) << 8)
+            t = self.lay.resolve(w, seg, ctx)
+            if t is None or not t.has(w):
+                self.unresolved.append(f"{seg.name}:{lo + i:04X} table entry -> ${w:04X}")
+            else:
+                self.push(t, w, ctx, "J", f"{seg.name}:{lo + i:04X} (table)")
+            seg.kind[lo + i - seg.base] = 2
+            seg.kind[hi + i - seg.base] = 2
+        self.tables[seg.name].append((lo, lo + count - 1))
+        self.tables[seg.name].append((hi, hi + count - 1))
+
+    def table_of_tables(self, seg: Segment, start: int, ctx: int | None, count: int | None,
+                        inner_count: int | None = None) -> None:
+        """An outer table of pointers to inner code pointer tables.
+
+        With `inner_count`, each inner table holds that many pointers (and may
+        be followed by data); otherwise it ends where the next one begins.
+        """
         inner: set[tuple[str, int]] = set()
         segs = {s.name: s for s in self.lay.segments()}
         if count is None:
@@ -268,7 +292,9 @@ class Tracer:
                 break
             w = seg.byte(pos) | (seg.byte(pos + 1) << 8)
             t = self.lay.resolve(w, seg, ctx)
-            if t is None:
+            if w == 0 and count is not None:
+                pass
+            elif t is None:
                 if count is None:
                     break
                 self.unresolved.append(f"{seg.name}:{pos:04X} inner table -> ${w:04X}")
@@ -289,7 +315,10 @@ class Tracer:
             if t is seg and start > w:
                 later.append(start)
             t.entries.setdefault(w, "T")
-            self.word_table(t, w, ctx, start, None, min(later) if later else None)
+            if inner_count is not None:
+                self.word_table(t, w, ctx, start, inner_count)
+            else:
+                self.word_table(t, w, ctx, start, None, min(later) if later else None)
 
     def run(self) -> None:
         segs = {s.name: s for s in self.lay.segments()}
@@ -358,6 +387,8 @@ class Tracer:
             self.seen.add(key)
             self.entry_of.setdefault((seg.name, addr), entry)
             op = seg.byte(addr)
+            if op in lay.traps:
+                return
             if op not in OPS:
                 self.err(seg, entry, f"{seg.name}:{addr:04X} illegal opcode ${op:02X}")
                 return
@@ -416,9 +447,11 @@ class Tracer:
                     elif seg.page is None:
                         ctx = None
                 else:
-                    self.target(operand, seg, ctx, addr, "S")
+                    t = self.target(operand, seg, ctx, addr, "S")
                     if operand in lay.bank_calls and seg.page is None:
                         ctx = lay.bank_calls[operand]
+                    if t is not None:
+                        nxt += lay.inline_args.get(f"{t.name}:{operand:04X}", 0)
                 a = None
                 xy = {"x": None, "y": None}
             elif mnem == "lda" and mode == "imm":
@@ -705,8 +738,10 @@ def trace(cfg: dict, rom: nesrom.NesRom, table_len: dict) -> tuple[Layout, Trace
     tr.run()
     for t in cfg.get("table", []):
         seg = segs[t["seg"]]
-        if t.get("depth", 1) == 2:
-            tr.table_of_tables(seg, t["addr"], t.get("ctx"), t.get("count"))
+        if "hi" in t:
+            tr.split_table(seg, t["addr"], t["hi"], t["count"], t.get("ctx"))
+        elif t.get("depth", 1) == 2:
+            tr.table_of_tables(seg, t["addr"], t.get("ctx"), t.get("count"), t.get("inner"))
         else:
             tr.word_table(seg, t["addr"], t.get("ctx"), t["addr"], t.get("count"))
         tr.run()
@@ -765,7 +800,8 @@ def main() -> None:
                       f"tables {tab:5d} bytes  entries {len(s.entries)}")
     known = cfg.get("indirect", {})
     indirect = [i for i in tr.indirect if i.split(" ")[0] not in known]
-    for title, items in (("Unresolved targets", tr.unresolved), ("Unexplained indirect jumps", indirect),
+    unresolved = [u for u in tr.unresolved if u.split(" ")[0] not in known]
+    for title, items in (("Unresolved targets", unresolved), ("Unexplained indirect jumps", indirect),
                          ("Errors", tr.errors)):
         items = sorted(set(items))
         report += ["", f"## {title} ({len(items)})"] + items
@@ -774,7 +810,7 @@ def main() -> None:
     (outdir / "report.txt").write_text("\n".join(report) + "\n")
     (outdir / "ramxref.txt").write_text("\n".join(ram_xref(lay, tr, ram)) + "\n")
     print("\n".join(report[:2 + len(lay.segments())]))
-    print(f"unresolved {len(set(tr.unresolved))}, unexplained indirect {len(set(indirect))}, "
+    print(f"unresolved {len(set(unresolved))}, unexplained indirect {len(set(indirect))}, "
           f"errors {len(set(tr.errors))} (see {outdir / 'report.txt'})")
 
 
