@@ -67,7 +67,7 @@ Done when: every stage renders correctly in the viewer and the text dump reads c
 Goal: `make verify` runs the original on the host and compares it with the port after every pass of the main loop ("tick").
 
 1. In the Makefile set:
-   - `TICK_PC`: the address where one pass of the main loop ends. Pick a point after the game logic and before anything that runs on its own timing. For example right after the game logic, before the sound driver.
+   - `TICK_PC`: the address where one pass of the main loop ends. Pick a point after the game logic and before anything that runs on its own timing. For example right after the game logic, before the sound driver. Games whose screens each have their own loop waiting for the next frame take a comma separated list: the instruction right after each wait.
    - `RAM_NAMES`: the markdown files with RAM names.
    - `VERIFY_FLAGS`:
      - `--ignore 180-1FF` leaves the stack out of the comparison.

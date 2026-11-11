@@ -13,7 +13,9 @@
 // is reported.
 //
 // Usage: nesref ROM --tick-pc ADDR [options]
-//   --tick-pc ADDR   PC where a tick ends (RAM is compared / dumped there)
+//   --tick-pc ADDR   PC where a tick ends (RAM is compared / dumped there);
+//                    a comma separated list for games with several loops
+//                    that each wait for the next frame
 //   --ticks N        stop after N ticks (default 600)
 //   --input FILE     input script, one "TICK BUTTONS" per line: from that
 //                    tick on the pad holds BUTTONS (letters ABsSUDLR or "-");
@@ -93,7 +95,16 @@ typedef struct {
 
 static Machine machines[2];
 static Machine *cur;
-static long tick_pc = -1;
+static long tick_pcs[32];
+static int tick_pc_count;
+
+static int is_tick_pc(uint16_t pc)
+{
+    for (int i = 0; i < tick_pc_count; i++)
+        if (pc == tick_pcs[i])
+            return 1;
+    return 0;
+}
 static long idle_pc = -1, idle_addr;
 static int tick_nmi;
 static int trace;
@@ -420,7 +431,7 @@ static void run_tick(void)
         // that waits for something only the original would change.
         if (++steps > 5000000)
             fail("tick does not end (hang?)");
-    } while (c->pc != tick_pc || (tick_nmi && !cur->nmi_seen));
+    } while (!is_tick_pc(c->pc) || (tick_nmi && !cur->nmi_seen));
     cur->nmi_seen = 0;
     cur->tick++;
 }
@@ -675,8 +686,14 @@ int main(int argc, char **argv)
     const char *rom = NULL, *out = NULL, *input = NULL;
     int speed = 1;
     for (int i = 1; i < argc; i++) {
-        if (!strcmp(argv[i], "--tick-pc") && i + 1 < argc)
-            tick_pc = strtol(argv[++i], NULL, 16);
+        if (!strcmp(argv[i], "--tick-pc") && i + 1 < argc) {
+            char *p = argv[++i];
+            while (*p && tick_pc_count < 32) {
+                tick_pcs[tick_pc_count++] = strtol(p, &p, 16);
+                if (*p == ',')
+                    p++;
+            }
+        }
         else if (!strcmp(argv[i], "--ticks") && i + 1 < argc)
             max_ticks = atol(argv[++i]);
         else if (!strcmp(argv[i], "--input") && i + 1 < argc)
@@ -729,7 +746,7 @@ int main(int argc, char **argv)
             return 2;
         }
     }
-    if (!rom || tick_pc < 0) {
+    if (!rom || !tick_pc_count) {
         fprintf(stderr, "usage: nesref ROM --tick-pc ADDR [--ticks N] [--input FILE] [--speed N]\n"
                         "       [--compare] [--ignore A-B] [--out FILE] [--ppu FILE] [--trace]\n");
         return 2;
