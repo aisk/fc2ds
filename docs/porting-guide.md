@@ -120,6 +120,7 @@ Goal: the port runs with no 6502 code at all, exactly as it will on the NDS.
 2. Replace every `call6502` and `call_regs` outside the `NESREF` blocks with direct calls. Or keep them: compiled with `PORT_REGS` (in the game's `DEFINES`), the port calls routines through their `PORT_HOOK` wrappers on the NDS too (`common/nds/src/porthooks.c`), the same dispatch `--native` uses on the host. This suits code where registers and flags cross routine boundaries everywhere, since the wrappers `make verify` checked become the calling convention.
 3. Switch `VERIFY_MODE` to `--native`. The game's `GameMain` now drives the port machine: interrupts call the C handlers, and any 6502 instruction the port would still run is an error. `--pcs FILE` lists such instructions while you get there.
 4. `port/` must compile for the NDS without warnings (`make`).
+   - With `PORT_REGS`, put the `PORT_HOOK` wrappers under `#ifdef PORT_REGS`, not `#ifdef NESREF`: the NDS build dispatches `call6502` through them too, and a call with no hook stops the NDS on a blank screen.
 
 Done when: `make verify` passes in native mode for every script.
 
